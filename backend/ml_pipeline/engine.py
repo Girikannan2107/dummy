@@ -2,112 +2,208 @@ import fitz  # PyMuPDF
 import base64
 import json
 import os
+import mimetypes
 import requests
 from core.config import settings
 
 class IntelligentDocumentProcessor:
     def __init__(self):
         self.api_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
-        # Notice we removed Paddle, TrOCR, and the ImagePreprocessor 
-        # Gemini Vision handles native document OCR exceptionally well on its own.
 
     def process_document(self, file_path: str) -> dict:
         if not self.api_key:    
-            return {"error": "Missing GEMINI_API_KEY. Please set the environment variable or hardcode it in engine.py."}
+            return {"error": "Missing GEMINI_API_KEY. Please set the environment variable."}
 
-        print(f"1. Opening PDF Document: {file_path}")
+        print(f"1. Reading Document: {file_path}")
+        parts = []
+
+        # Determine if the file is a PDF or an Image
+        mime_type, _ = mimetypes.guess_type(file_path)
         
         try:
-            doc = fitz.open(file_path)
+            if mime_type == 'application/pdf':
+                doc = fitz.open(file_path)
+                print(f"2. Extracting {len(doc)} pages as images for Gemini Vision...")
+                for page_num in range(len(doc)):
+                    page = doc.load_page(page_num)
+                    pix = page.get_pixmap(dpi=200) 
+                    img_data = pix.tobytes("jpeg")
+                    img_base64 = base64.b64encode(img_data).decode('utf-8')
+                    
+                    parts.append({
+                        "inlineData": {
+                            "mimeType": "image/jpeg",
+                            "data": img_base64
+                        }
+                    })
+                doc.close()
+                
+            elif mime_type in ['image/jpeg', 'image/png']:
+                print("2. Encoding single image for Gemini Vision...")
+                with open(file_path, "rb") as image_file:
+                    img_data = image_file.read()
+                    img_base64 = base64.b64encode(img_data).decode('utf-8')
+                    
+                    parts.append({
+                        "inlineData": {
+                            "mimeType": mime_type,
+                            "data": img_base64
+                        }
+                    })
+            else:
+                 return {"error": f"Unsupported file type: {mime_type}. Please upload PDF, JPG, or PNG."}
+
         except Exception as e:
-            return {"error": f"Failed to open PDF file: {str(e)}"}
+            return {"error": f"Failed to process file: {str(e)}"}
 
-        print(f"2. Extracting {len(doc)} pages as images for Gemini Vision...")
-        parts = []
-        
-        # Define the system prompt with the exact nested schema your FastAPI export route expects
+        # --- THE EXHAUSTIVE PROMPT ---
         prompt = """
-        You are a Senior AI Data Extractor specializing in metallurgical manufacturing records.
-        I am providing you with images of a multi-page manufacturing document.
+You are an expert Foundry Production Plan OCR + Data Extraction AI.
 
-        Rules:
-        1. All pages EXCEPT the last one represent sequential production steps (Queue Data). Extract 'Heat No', 'Temperatures', and 'Weights' carefully. Pay attention to handwritten overrides.
-        2. The LAST page is a billing/batch summary table. Extract rows matching 'Material Code', 'Description', 'Batch No', and 'Total Qty'.
-        3. Output strictly according to the provided JSON schema. Do not include markdown code blocks.
+TASK:
+Extract ALL printed and handwritten data from multi-page pouring/manufacturing documents.
 
-        OUTPUT SCHEMA INSTRUCTIONS:
-        Return strictly a valid JSON object matching this exact structure. Use "" if a field is missing.
+RULES:
+
+1. Pages 1..N-1 = Production Plan pages.
+2. Last page = Batch Summary page.
+3. Handwritten values override printed values.
+4. Ignore crossed-out values.
+5. Extract all visible data exactly as written.
+6. Material consumption lists may appear as handwritten numbered items; extract dynamically.
+7. Preserve units (kg, Nos, °C, PM, etc.).
+8. If blank, return "".
+9. Return VALID JSON ONLY.
+10. Do not summarize or explain.
+
+JSON:
+
+{
+"queue_pages":[
+{
+"page_number":"",
+"document_headers":{
+"form_id":"",
+"heat_no":"",
+"planning_date":"",
+"pouring_date_header":""
+},
+
+```
+  "product_details":{
+    "description":"",
+    "customer":"",
+    "grade":"",
+    "casting_weight":"",
+    "liquid_weight":"",
+    "qty":"",
+    "sample_bulk":"",
+    "finish_type":"",
+    "pattern_code":"",
+    "pattern_serial_no":"",
+    "pattern_type":"",
+    "drawing_number":"",
+    "part_no":"",
+    "pcs_in_box":"",
+    "no_of_core_boxes":"",
+    "no_of_cores":"",
+    "method_remarks":""
+  },
+
+  "sleeve_table":[
+    {
+      "sle_code":"",
+      "sle_name":"",
+      "slv_qty":""
+    }
+  ],
+
+  "printed_qa_requirements":[],
+
+  "handwritten_consumables_list":[
+    {
+      "item":"",
+      "quantity":""
+    }
+  ],
+
+  "inspection_parameters":{
+    "hardness_range_mould":"",
+    "hardness_range_core":"",
+    "coating_baume_value":"",
+    "core_oven_baking_on_time":"",
+    "core_oven_baking_off_time":"",
+    "core_oven_preheating_temp":"",
+    "no_of_cores":"",
+    "mould_coating":"",
+    "core_coating":"",
+    "lettering_checking":"",
+    "mould_core_visual_checking":"",
+    "mould_core_coating_application":"",
+    "core_setting_wall_thickness":"",
+    "mould_core_preheating":"",
+    "templates_checking":"",
+    "core_setting_inspector":"",
+    "closing_inspector":"",
+    "pouring_inspector":""
+  },
+
+  "pouring_details":{
+    "pouring_date":"",
+    "pouring_time":"",
+    "pouring_qty":"",
+    "pouring_sec":"",
+    "tapping_temp":"",
+    "pouring_temp":"",
+    "laddle_temp":"",
+    "pouring_weight":"",
+    "core_making":""
+  },
+
+  "bottom_signatures":{
+    "planned_by":"",
+    "pattern_inspected_by":"",
+    "qa_parameters_checked_by":"",
+    "core_inspected_by":"",
+    "mould_inspected_by":"",
+    "closing_inspected_by":"",
+    "pouring_inspected_by":"",
+    "pre_production_inspected_by":""
+  }
+}
+```
+
+],
+
+"batch_summary":[
+{
+"p_order":"",
+"material_code":"",
+"material_description":"",
+"batch_no":"",
+"t_qty":"",
+"unit":"",
+"b_qty":"",
+"t_c_wt":""
+}
+]
+}
+"""
+
         
-        {
-          "queue_pages": [
-            {
-              "page_number": 1,
-              "production_plan": {
-                "heat_no": "",
-                "planning_date": "",
-                "pouring_date": "",
-                "customer": "",
-                "grade": "",
-                "casting_weight": ""
-              },
-              "qa_parameters": {
-                "hardness_mould": "",
-                "hardness_core": ""
-              },
-              "pouring_details": {
-                "pouring_time": "",
-                "tapping_temp": "",
-                "pouring_temp": "",
-                "laddle_temp": "",
-                "pouring_weight": ""
-              }
-            }
-          ],
-          "batch_summary": [
-            {
-              "material_code": "",
-              "material_description": "",
-              "batch_no": "",
-              "t_qty": "",
-              "unit": ""
-            }
-          ]
-        }
-        """
-        
-        # Add the text prompt as the first part of the payload
-        parts.append({"text": prompt})
+        # Make sure the prompt text is the very first item in the parts array
+        parts.insert(0, {"text": prompt})
 
-        # Loop through the PDF, convert each page to a base64 JPEG, and append to the prompt parts
-        for page_num in range(len(doc)):
-            page = doc.load_page(page_num)
-            # DPI 200 is sufficient for Gemini Vision to read handwriting without bloating the payload size
-            pix = page.get_pixmap(dpi=200) 
-            img_data = pix.tobytes("jpeg")
-            img_base64 = base64.b64encode(img_data).decode('utf-8')
-            
-            parts.append({
-                "inlineData": {
-                    "mimeType": "image/jpeg",
-                    "data": img_base64
-                }
-            })
-            
-        doc.close()
-
-        print("3. Sending multi-page payload to Gemini 2.5 Flash Vision API...")
-        
+        print("3. Sending multi-page payload to Gemini API...")
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.api_key}"
             headers = {'Content-Type': 'application/json'}
             
             payload = {
-                "contents": [{
-                    "parts": parts
-                }],
+                "contents": [{"parts": parts}],
                 "generationConfig": {
                     "responseMimeType": "application/json",
-                    "temperature": 0.1 # Low temperature for highly deterministic data extraction
+                    "temperature": 0.1 
                 }
             }
             
@@ -117,21 +213,17 @@ class IntelligentDocumentProcessor:
             result = response.json()
             ai_text_response = result['candidates'][0]['content']['parts'][0]['text'].strip()
             
-            # Text Sanitization: Strip markdown indicators if appended
             if ai_text_response.startswith("```"):
                 ai_text_response = ai_text_response.lstrip("`").replace("json", "", 1).strip()
                 if ai_text_response.endswith("```"):
                     ai_text_response = ai_text_response.rstrip("`").strip()
             
-            print("4. Successfully extracted and structured data.")
             return json.loads(ai_text_response)
             
+        except requests.exceptions.RequestException as req_err:
+             print(f"API Request Failed: {req_err}")
+             if req_err.response is not None:
+                 print(f"Response Content: {req_err.response.text}")
+             return {"error": f"API Error: {str(req_err)}"}
         except Exception as e:
-            print("--- CRITICAL API DIAGNOSTIC LOG ---")
-            print(f"Exception Type: {type(e)}")
-            print(f"Error Message: {str(e)}")
-            if 'response' in locals():
-                print(f"Gemini HTTP Status Code: {response.status_code}")
-                print(f"Gemini Raw Body Response: {response.text}")
-            print("-----------------------------------")
             return {"error": str(e)}
