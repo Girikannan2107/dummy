@@ -37,6 +37,8 @@ async def upload_and_process_document(file: UploadFile = File(...), db = Depends
         await out_file.write(content)
 
     try:
+        # Assumes ocr_engine.process_document now handles the 6-page PDF splitting 
+        # and returns {"queue_pages": [...], "batch_summary": [...]}
         extracted_results = await run_in_threadpool(ocr_engine.process_document, file_path)
         
         # Enhanced debugging log
@@ -48,9 +50,10 @@ async def upload_and_process_document(file: UploadFile = File(...), db = Depends
                 detail=f"AI Extraction Pipeline Error: {extracted_results['error']}"
             )
             
-        # Save to database (MongoDB with automatic local JSON fallback)
+        # Save to database (MongoDB)
         task_id = uuid.uuid4().hex
         repo = DocumentRepository(db)
+        # Ensure it saves the new dual-schema structure
         await repo.save_document(task_id, extracted_results)
         
         return {
@@ -68,7 +71,7 @@ async def upload_and_process_document(file: UploadFile = File(...), db = Depends
 @router.get("/documents")
 async def get_all_processed_documents(db = Depends(get_db)):
     """
-    Retrieves all processed document records from the database or local file fallback.
+    Retrieves all processed document records from the database.
     """
     try:
         repo = DocumentRepository(db)
@@ -80,78 +83,78 @@ async def get_all_processed_documents(db = Depends(get_db)):
 @router.get("/documents/export")
 async def export_all_data_to_excel(db = Depends(get_db)):
     """
-    Aggregates all processed document records, converts to an Excel sheet,
-    and returns it as a downloadable attachment with structural verification safety.
+    Aggregates all processed document records and converts them to a multi-sheet Excel file.
+    Sheet 1: Queue Data (Pages 1-5)
+    Sheet 2: Batch Summary (Page 6)
     """
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection is not initialized.")
         
     try:
-        # Added $match guard to ensure we only target documents that actually contain table arrays
-        pipeline = [
-            {
-                '$match': {
-                    'extracted_data.table_data': {'$exists': True, '$type': 'array'}
-                }
-            },
-            {
-                '$unwind': '$extracted_data.table_data'
-            }, 
-            {
-                '$project': {
-                    '_id': 0, 
-                    'date': {'$ifNull': ['$extracted_data.table_data.date', 'N/A']}, 
-                    'heat_no': {'$ifNull': ['$extracted_data.table_data.heat_no', 'N/A']}, 
-                    'item': {'$ifNull': ['$extracted_data.table_data.item', 'N/A']}, 
-                    'grade': {'$ifNull': ['$extracted_data.table_data.grade', 'N/A']}, 
-                    'customer': {'$ifNull': ['$extracted_data.table_data.customer', 'N/A']}, 
-                    'planned_pouring_weight': {'$ifNull': ['$extracted_data.table_data.planned_pouring_weight', '']}, 
-                    'pouring_time_planned': {'$ifNull': ['$extracted_data.table_data.pouring_time_planned', '']}, 
-                    'ladle_number': {'$ifNull': ['$extracted_data.table_data.ladle_number', '']}, 
-                    'tapping_sequence': {'$ifNull': ['$extracted_data.table_data.tapping_sequence', '']}, 
-                    'pouring_sequence': {'$ifNull': ['$extracted_data.table_data.pouring_sequence', '']}, 
-                    'pouring_time_sec': {'$ifNull': ['$extracted_data.table_data.pouring_time_sec', '']}, 
-                    'pouring_temperature': {'$ifNull': ['$extracted_data.table_data.pouring_temperature', '']}, 
-                    'metal_weight_before_kg': {'$ifNull': ['$extracted_data.table_data.metal_weight_before_kg', '']}, 
-                    'metal_weight_after_kg': {'$ifNull': ['$extracted_data.table_data.metal_weight_after_kg', '']}, 
-                    'kno_weight': {'$ifNull': ['$extracted_data.table_data.kno_weight', '']}, 
-                    'actual_liquid_poured_kg': {'$ifNull': ['$extracted_data.table_data.actual_liquid_poured_kg', '']}, 
-                    'weight_diff': {'$ifNull': ['$extracted_data.table_data.weight_diff', '']}, 
-                    'pouring_observation': {'$ifNull': ['$extracted_data.table_data.pouring_observation', '']}, 
-                    'weight_before_cutting': {'$ifNull': ['$extracted_data.table_data.weight_before_cutting', '']}
-                }
-            }
-        ]
-        
         collection = db["processed_documents"]
-        cursor = collection.aggregate(pipeline)
-        data = await cursor.to_list(length=10000)
         
-        columns = [
-            'date', 'heat_no', 'item', 'grade', 'customer', 'planned_pouring_weight',
-            'pouring_time_planned', 'ladle_number', 'tapping_sequence', 'pouring_sequence',
-            'pouring_time_sec', 'pouring_temperature', 'metal_weight_before_kg',
-            'metal_weight_after_kg', 'kno_weight', 'actual_liquid_poured_kg',
-            'weight_diff', 'pouring_observation', 'weight_before_cutting'
-        ]
+        # Fetch all documents that have extracted data
+        cursor = collection.find({"extracted_data": {"$exists": True}})
+        documents = await cursor.to_list(length=10000)
 
-        if not data:
-            df = pd.DataFrame(columns=columns)
-        else:
-            df = pd.DataFrame(data)
-            # Guarantee columns match expected layout sequence perfectly
-            df = df.reindex(columns=columns)
+        queue_rows = []
+        batch_rows = []
+
+        # Parse the JSON structure into flat rows for Excel
+        for doc in documents:
+            data = doc.get("extracted_data", {})
             
+            # 1. Flatten Queue Pages
+            for page in data.get("queue_pages", []):
+                prod = page.get("production_plan", {})
+                qa = page.get("qa_parameters", {})
+                pour = page.get("pouring_details", {})
+                
+                queue_rows.append({
+                    "Task ID": doc.get("task_id", "N/A"),
+                    "Page No": page.get("page_number", ""),
+                    "Heat No": prod.get("heat_no", ""),
+                    "Planning Date": prod.get("planning_date", ""),
+                    "Pouring Date": prod.get("pouring_date", ""),
+                    "Customer": prod.get("customer", ""),
+                    "Grade": prod.get("grade", ""),
+                    "Casting Wt": prod.get("casting_weight", ""),
+                    "Mould Hardness": qa.get("hardness_mould", ""),
+                    "Core Hardness": qa.get("hardness_core", ""),
+                    "Pouring Time": pour.get("pouring_time", ""),
+                    "Tapping Temp": pour.get("tapping_temp", ""),
+                    "Pouring Temp": pour.get("pouring_temp", ""),
+                    "Laddle Temp": pour.get("laddle_temp", ""),
+                    "Pouring Wt": pour.get("pouring_weight", "")
+                })
+            
+            # 2. Flatten Batch Summary Table
+            for row in data.get("batch_summary", []):
+                batch_rows.append({
+                    "Task ID": doc.get("task_id", "N/A"),
+                    "Material Code": row.get("material_code", ""),
+                    "Material Description": row.get("material_description", ""),
+                    "Batch No": row.get("batch_no", ""),
+                    "Total Qty": row.get("t_qty", ""),
+                    "Unit": row.get("unit", "")
+                })
+
+        # Convert to Pandas DataFrames
+        df_queue = pd.DataFrame(queue_rows) if queue_rows else pd.DataFrame(columns=["Heat No", "Pouring Date", "Customer"])
+        df_batch = pd.DataFrame(batch_rows) if batch_rows else pd.DataFrame(columns=["Material Code", "Batch No", "Total Qty"])
+            
+        # Write to memory buffer
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Pouring Data')
+            df_queue.to_excel(writer, index=False, sheet_name='Production Queue (P1-P5)')
+            df_batch.to_excel(writer, index=False, sheet_name='Batch Summary (P6)')
             
         buffer.seek(0)
         
         return StreamingResponse(
             buffer,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=pouring_data.xlsx"}
+            headers={"Content-Disposition": "attachment; filename=manufacturing_records.xlsx"}
         )
         
     except Exception as e:
