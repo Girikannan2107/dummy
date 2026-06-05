@@ -520,6 +520,13 @@ export default function Dashboard() {
   const [spcLimits, setSpcLimits] = useState({ mean: 0, ucl: 3, lcl: -3 });
   const [kpis, setKpis] = useState({ totalHeats: 0, avgPourTemp: 0, avgTempLoss: 0, yieldPercent: 0 });
 
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [hasNextPage, setHasNextPage] = useState(false);
+  const [taskId, setTaskId] = useState(null);
+  const [nextPageLoading, setNextPageLoading] = useState(false);
+
   // Historical database analytics states
   const [historicalHeats, setHistoricalHeats] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -931,12 +938,16 @@ export default function Dashboard() {
     setError(null);
     setResult(null);
     setUploadedFilename(null);
+    setCurrentPage(0);
+    setTotalPages(1);
+    setHasNextPage(false);
+    setTaskId(null);
 
     const formData = new FormData();
     formData.append('file', file);
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/v1/documents/process', {
+      const response = await fetch('http://127.0.0.1:8000/api/v1/documents/process?page=0', {
         method: 'POST',
         body: formData,
       });
@@ -945,10 +956,39 @@ export default function Dashboard() {
       if (data.error) throw new Error(data.error);
       setResult(data.data);
       setUploadedFilename(data.filename);
+      setTaskId(data.task_id);
+      setCurrentPage(data.current_page ?? 0);
+      setTotalPages(data.total_pages ?? 1);
+      setHasNextPage(data.has_next_page ?? false);
     } catch (err) {
       setError(err.message || "Failed to process document.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleProcessNextPage = async () => {
+    if (currentPage >= totalPages - 1) return;
+    setNextPageLoading(true);
+    setError(null);
+    
+    try {
+      const nextPage = currentPage + 1;
+      const response = await fetch(`http://127.0.0.1:8000/api/v1/documents/process?page=${nextPage}&filename=${uploadedFilename}&task_id=${taskId}`, {
+        method: 'POST'
+      });
+      if (!response.ok) throw new Error(`Server responded with status: ${response.status}`);
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+      
+      setResult(data.data);
+      setCurrentPage(data.current_page ?? nextPage);
+      setTotalPages(data.total_pages ?? totalPages);
+      setHasNextPage(data.has_next_page ?? false);
+    } catch (err) {
+      setError(err.message || "Failed to process next page.");
+    } finally {
+      setNextPageLoading(false);
     }
   };
 
@@ -957,6 +997,10 @@ export default function Dashboard() {
     setFile(null);
     setUploadedFilename(null);
     setProcessedRows([]);
+    setCurrentPage(0);
+    setTotalPages(1);
+    setHasNextPage(false);
+    setTaskId(null);
   };
 
   const getSpcChartData = () => {
@@ -1084,6 +1128,10 @@ export default function Dashboard() {
                           <CheckCircle className="text-emerald-400" size={14} /> <span>Inference Success</span>
                         </div>
                         <div className="grid grid-cols-2 gap-4 text-xs font-semibold">
+                          <div className="col-span-2 border-b border-slate-850 pb-2">
+                            <span className="text-slate-550 text-[10px] uppercase font-bold tracking-wider block">Processed Progress</span>
+                            <strong className="text-slate-200 text-xs font-bold font-mono">Page {currentPage + 1} of {totalPages}</strong>
+                          </div>
                           <div>
                             <span className="text-slate-500 text-[10px] uppercase font-bold tracking-wider block">Pours Extracted</span>
                             <strong className="text-slate-200 text-base font-bold font-mono">{processedRows.length} rows</strong>
@@ -1097,7 +1145,20 @@ export default function Dashboard() {
                         </div>
                       </div>
                     </div>
-                    <div className="mt-4">
+                    <div className="mt-4 space-y-2">
+                      {hasNextPage && (
+                        <button 
+                          onClick={handleProcessNextPage} 
+                          disabled={nextPageLoading}
+                          className="w-full px-4 py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all shadow-lg flex items-center justify-center gap-2"
+                        >
+                          {nextPageLoading ? (
+                            <><span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /><span>Processing Page {currentPage + 2}...</span></>
+                          ) : (
+                            <><ArrowRight size={14} /><span>Process Next Page ({currentPage + 2}/{totalPages})</span></>
+                          )}
+                        </button>
+                      )}
                       <button onClick={handleCloseRecord} className="w-full px-4 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all shadow-lg flex items-center justify-center gap-2">
                         <ShieldCheck size={16} /> Verify & Close Record
                       </button>

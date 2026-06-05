@@ -17,53 +17,108 @@ router = APIRouter()
 print("Loading ML Models directly into FastAPI...")
 ocr_engine = IntelligentDocumentProcessor()
 
+def merge_page_data(existing_data: dict, new_page_data: dict) -> dict:
+    merged = existing_data.copy()
+    for key, val in new_page_data.items():
+        if isinstance(val, dict):
+            if key not in merged or not isinstance(merged[key], dict):
+                merged[key] = val.copy()
+            else:
+                for sub_key, sub_val in val.items():
+                    if isinstance(sub_val, list):
+                        if sub_key not in merged[key] or not isinstance(merged[key][sub_key], list):
+                            merged[key][sub_key] = sub_val.copy()
+                        else:
+                            merged[key][sub_key].extend(sub_val)
+                    else:
+                        merged[key][sub_key] = sub_val
+        elif isinstance(val, list):
+            if key not in merged or not isinstance(merged[key], list):
+                merged[key] = val.copy()
+            else:
+                merged[key].extend(val)
+        else:
+            merged[key] = val
+    return merged
+
 @router.post("/documents/process")
-async def upload_and_process_document(file: UploadFile = File(...), db = Depends(get_db)):
+async def upload_and_process_document(
+    file: UploadFile = File(None),
+    filename: str = None,
+    page: int = 0,
+    task_id: str = None,
+    db = Depends(get_db)
+):
     """
-    Accepts an industrial scan and processes it IMMEDIATELY, 
-    returning the extracted JSON data and storing it in the database.
+    Accepts an industrial scan page-by-page. For initial page (page=0), accepts a file upload.
+    For subsequent pages, accepts filename to reuse the saved document path.
+    Integrates results incrementally into MongoDB.
     """
-    allowed_types = ["image/jpeg", "image/png", "application/pdf"]
-    if file.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail="Unsupported file type. Use JPG, PNG, or PDF.")
+    if not file and not filename:
+        raise HTTPException(status_code=400, detail="Either file or filename must be provided.")
 
-    file_extension = file.filename.split(".")[-1]
-    unique_filename = f"{uuid.uuid4().hex}.{file_extension}"
-    file_path = os.path.join(settings.UPLOAD_DIR, unique_filename)
+    if file:
+        allowed_types = ["image/jpeg", "image/png", "application/pdf"]
+        if file.content_type not in allowed_types:
+            raise HTTPException(status_code=400, detail="Unsupported file type. Use JPG, PNG, or PDF.")
 
-    # Save file
-    async with aiofiles.open(file_path, 'wb') as out_file:
-        content = await file.read()
-        await out_file.write(content)
+        file_extension = file.filename.split(".")[-1]
+        unique_filename = f"{uuid.uuid4().hex}.{file_extension}"
+        file_path = os.path.join(settings.UPLOAD_DIR, unique_filename)
+
+        # Save file
+        async with aiofiles.open(file_path, 'wb') as out_file:
+            content = await file.read()
+            await out_file.write(content)
+            
+        filename_used = unique_filename
+    else:
+        file_path = os.path.join(settings.UPLOAD_DIR, filename)
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"Saved file {filename} not found on server.")
+        filename_used = filename
 
     try:
-        # Assumes ocr_engine.process_document now handles the 6-page PDF splitting 
-        # and returns {"queue_pages": [...], "batch_summary": [...]}
-        extracted_results = await run_in_threadpool(ocr_engine.process_document, file_path)
+        # Process the specific page
+        result_payload = await run_in_threadpool(ocr_engine.process_document, file_path, page_num=page)
         
         # Enhanced debugging log
-        print(f"DEBUG - Extracted results payload: {extracted_results}")
+        print(f"DEBUG - Extracted page results payload: {result_payload}")
         
-        if isinstance(extracted_results, dict) and "error" in extracted_results:
+        if isinstance(result_payload, dict) and "error" in result_payload:
             raise HTTPException(
                 status_code=422, 
-                detail=f"AI Extraction Pipeline Error: {extracted_results['error']}"
+                detail=f"AI Extraction Pipeline Error: {result_payload['error']}"
             )
             
-        # Save to database (MongoDB)
-        task_id = uuid.uuid4().hex
+        extracted_data = result_payload["extracted_data"]
+        total_pages = result_payload["total_pages"]
+        
+        # Save to database (MongoDB) and merge if task_id is provided
         repo = DocumentRepository(db)
-        # Ensure it saves the new dual-schema structure
-        await repo.save_document(task_id, extracted_results)
+        if task_id:
+            existing_doc = await repo.get_document(task_id)
+            if existing_doc:
+                accumulated_data = merge_page_data(existing_doc.get("extracted_data", {}) or {}, extracted_data)
+                await repo.save_document(task_id, accumulated_data)
+            else:
+                await repo.save_document(task_id, extracted_data)
+                accumulated_data = extracted_data
+        else:
+            task_id = uuid.uuid4().hex
+            await repo.save_document(task_id, extracted_data)
+            accumulated_data = extracted_data
         
         return {
-            "message": "Document processed successfully",
-            "filename": unique_filename,
+            "message": "Page processed successfully",
+            "filename": filename_used,
             "task_id": task_id,
-            "data": extracted_results 
+            "data": accumulated_data,
+            "current_page": page,
+            "total_pages": total_pages,
+            "has_next_page": page < total_pages - 1
         }
     except HTTPException as he:
-        # Do not let our explicit HTTP exceptions get swallowed by the generic 500 block
         raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Processing failed inside route: {str(e)}")

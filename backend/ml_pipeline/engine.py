@@ -10,12 +10,13 @@ class IntelligentDocumentProcessor:
     def __init__(self):
         self.api_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
 
-    def process_document(self, file_path: str) -> dict:
+    def process_document(self, file_path: str, page_num: int = None) -> dict:
         if not self.api_key:    
-            return {"error": "Missing GEMINI_API_KEY. Please set the environment variable."}
+            return {"error": "Missing GEMINI_API_KEY. Please set the environment variable.", "total_pages": 0}
 
         print(f"1. Reading Document: {file_path}")
         parts = []
+        total_pages = 0
 
         # Determine if the file is a PDF or an Image
         mime_type, _ = mimetypes.guess_type(file_path)
@@ -23,9 +24,17 @@ class IntelligentDocumentProcessor:
         try:
             if mime_type == 'application/pdf':
                 doc = fitz.open(file_path)
-                print(f"2. Extracting {len(doc)} pages as images for Gemini Vision...")
-                for page_num in range(len(doc)):
-                    page = doc.load_page(page_num)
+                total_pages = len(doc)
+                print(f"2. PDF has {total_pages} pages. Target page: {page_num}")
+                
+                pages_to_process = range(total_pages) if page_num is None else [page_num]
+                
+                for p_idx in pages_to_process:
+                    if p_idx < 0 or p_idx >= total_pages:
+                        doc.close()
+                        return {"error": f"Page number {p_idx} is out of bounds (total pages: {total_pages})", "total_pages": total_pages}
+                    
+                    page = doc.load_page(p_idx)
                     pix = page.get_pixmap(dpi=100)
                     img_data = pix.tobytes("jpeg")
                     img_base64 = base64.b64encode(img_data).decode('utf-8')
@@ -39,6 +48,9 @@ class IntelligentDocumentProcessor:
                 doc.close()
                 
             elif mime_type in ['image/jpeg', 'image/png']:
+                total_pages = 1
+                if page_num is not None and page_num != 0:
+                    return {"error": f"Page number {page_num} is out of bounds for an image (total pages: 1)", "total_pages": 1}
                 print("2. Encoding single image for Gemini Vision...")
                 with open(file_path, "rb") as image_file:
                     img_data = image_file.read()
@@ -51,10 +63,10 @@ class IntelligentDocumentProcessor:
                         }
                     })
             else:
-                 return {"error": f"Unsupported file type: {mime_type}. Please upload PDF, JPG, or PNG."}
+                 return {"error": f"Unsupported file type: {mime_type}. Please upload PDF, JPG, or PNG.", "total_pages": 0}
 
         except Exception as e:
-            return {"error": f"Failed to process file: {str(e)}"}
+            return {"error": f"Failed to process file: {str(e)}", "total_pages": 0}
 
         # --- THE EXHAUSTIVE PROMPT ---
         prompt = """Extract all printed and handwritten data from this Foundry Ladle Pouring document. 
@@ -77,10 +89,10 @@ Return strictly valid JSON matching this exact skeleton structure. Let the AI dy
         # Make sure the prompt text is the very first item in the parts array
         parts.insert(0, {"text": prompt})
 
-        print("3. Sending multi-page payload to Gemini API...")
+        print("3. Sending page payload to Gemini API...")
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.api_key}"
-            headers = {'Content-Type': 'application/json'} # <-- This was missing
+            headers = {'Content-Type': 'application/json'}
             
             payload = {
                 "contents": [{"parts": parts}],
@@ -95,7 +107,8 @@ Return strictly valid JSON matching this exact skeleton structure. Let the AI dy
                 print("Status:", response.status_code)
                 print("Response:", response.text)
                 return {
-                    "error": response.text
+                    "error": response.text,
+                    "total_pages": total_pages
                 }            
             result = response.json()
             ai_text_response = result['candidates'][0]['content']['parts'][0]['text'].strip()
@@ -105,12 +118,15 @@ Return strictly valid JSON matching this exact skeleton structure. Let the AI dy
                 if ai_text_response.endswith("```"):
                     ai_text_response = ai_text_response.rstrip("`").strip()
             
-            return json.loads(ai_text_response)
+            return {
+                "extracted_data": json.loads(ai_text_response),
+                "total_pages": total_pages
+            }
             
         except requests.exceptions.RequestException as req_err:
              print(f"API Request Failed: {req_err}")
              if req_err.response is not None:
                  print(f"Response Content: {req_err.response.text}")
-             return {"error": f"API Error: {str(req_err)}"}
+             return {"error": f"API Error: {str(req_err)}", "total_pages": total_pages}
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "total_pages": total_pages}
