@@ -28,12 +28,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi.staticfiles import StaticFiles
+
 # Include Routers
 app.include_router(
     documents.router, 
     prefix=settings.API_V1_STR, 
     tags=["Documents"]
 )
+
+# Serve uploaded documents for preview
+app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
 @app.get("/health")
 async def health_check():

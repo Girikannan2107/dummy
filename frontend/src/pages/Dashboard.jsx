@@ -78,8 +78,435 @@ const CustomTooltip = ({ active, payload, label }) => {
   return null;
 };
 
+// Formats property keys from camelCase, snake_case, etc. into readable Title Case
+const formatKey = (key) => {
+  if (!key) return "";
+  // Check if it's already in a readable form
+  const spaced = key
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/[_-]+/g, ' ')
+    .trim();
+  return spaced.replace(/\b\w/g, c => c.toUpperCase());
+};
+
+// Formats property values with proper units, dates, and missing highlights
+const formatValue = (value, keyName = "") => {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 border border-rose-500/20 text-rose-400 uppercase tracking-wide">
+        Missing
+      </span>
+    );
+  }
+  
+  const strVal = String(value).trim();
+  const lowerKey = keyName.toLowerCase();
+  
+  // Apply unit formatting based on key name heuristics
+  if (lowerKey.includes("temp") || lowerKey.includes("temperature")) {
+    if (!strVal.includes("°") && !isNaN(parseFloat(strVal))) {
+      return `${strVal}°C`;
+    }
+  }
+  if (lowerKey.includes("weight")) {
+    if (!strVal.toLowerCase().includes("kg") && !strVal.toLowerCase().includes("ton") && !isNaN(parseFloat(strVal))) {
+      return `${strVal} kg`;
+    }
+  }
+  if (lowerKey.includes("sec") || lowerKey.includes("duration") || lowerKey.includes("time")) {
+    if (!strVal.toLowerCase().includes("sec") && !strVal.toLowerCase().includes("min") && !strVal.toLowerCase().includes("am") && !strVal.toLowerCase().includes("pm") && !isNaN(parseFloat(strVal))) {
+      return `${strVal} sec`;
+    }
+  }
+  
+  return strVal;
+};
+
+// Document Preview Component supporting Local File Object URLs & Historical Server Files
+function DocumentPreview({ file, filename }) {
+  if (!file && !filename) {
+    return (
+      <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-8 h-[650px] flex flex-col items-center justify-center text-center text-slate-500 shadow-xl">
+        <FileText size={48} className="text-slate-700 mb-3" />
+        <p className="text-xs font-bold uppercase tracking-wider text-slate-400">No Document Loaded</p>
+        <p className="text-[10px] text-slate-550 mt-1.5 max-w-[200px] leading-relaxed">
+          Upload a Ladle Pouring Record to view its interactive visual preview here.
+        </p>
+      </div>
+    );
+  }
+
+  const url = file ? URL.createObjectURL(file) : `http://127.0.0.1:8000/uploads/${filename}`;
+  const isPDF = file ? file.type === "application/pdf" : filename.toLowerCase().endsWith(".pdf");
+
+  return (
+    <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4 h-[650px] flex flex-col shadow-xl sticky top-4">
+      <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+        <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+          <FileText size={14} className="text-cyan-400" /> Document Preview
+        </span>
+        <span className="text-[10px] bg-slate-950/80 border border-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono truncate max-w-[180px]">
+          {file ? file.name : filename}
+        </span>
+      </div>
+      <div className="flex-grow rounded-xl bg-slate-950 overflow-hidden relative border border-slate-800 flex items-center justify-center">
+        {isPDF ? (
+          <iframe 
+            src={`${url}#toolbar=0`} 
+            className="w-full h-full border-0" 
+            title="PDF Preview"
+          />
+        ) : (
+          <img 
+            src={url} 
+            alt="Uploaded Document Preview" 
+            className="max-w-full max-h-full object-contain"
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Enterprise SAP/Fiori Style Dynamic Data Table
+function FioriSectionTable({ title, data, icon: Icon }) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortField, setSortField] = useState("");
+  const [sortDirection, setSortDirection] = useState("asc");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+
+  if (!data) return null;
+
+  const isArray = Array.isArray(data);
+  let rawRows = [];
+  let headers = [];
+
+  if (isArray) {
+    rawRows = data;
+    if (data.length > 0) {
+      headers = Object.keys(data[0]);
+    }
+  } else {
+    rawRows = Object.entries(data).map(([k, v]) => ({
+      parameter: k,
+      value: v
+    }));
+    headers = ["parameter", "value"];
+  }
+
+  // Search filter
+  const filteredRows = rawRows.filter(row => {
+    return Object.values(row).some(val => 
+      String(val || "").toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  });
+
+  // Sorting
+  const sortedRows = [...filteredRows];
+  if (sortField) {
+    sortedRows.sort((a, b) => {
+      let valA = a[sortField];
+      let valB = b[sortField];
+      
+      if (valA !== null && typeof valA === "object") valA = JSON.stringify(valA);
+      if (valB !== null && typeof valB === "object") valB = JSON.stringify(valB);
+      
+      const strA = String(valA || "").toLowerCase();
+      const strB = String(valB || "").toLowerCase();
+      
+      if (strA < strB) return sortDirection === "asc" ? -1 : 1;
+      if (strA > strB) return sortDirection === "asc" ? 1 : -1;
+      return 0;
+    });
+  }
+
+  // Pagination
+  const totalRows = sortedRows.length;
+  const indexOfLastRow = currentPage * rowsPerPage;
+  const indexOfFirstRow = indexOfLastRow - rowsPerPage;
+  const currentRows = sortedRows.slice(indexOfFirstRow, indexOfLastRow);
+  const totalPages = Math.ceil(totalRows / rowsPerPage);
+
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+    setCurrentPage(1);
+  };
+
+  const handlePageChange = (page) => {
+    if (page >= 1 && page <= totalPages) {
+      setCurrentPage(page);
+    }
+  };
+
+  const handleExportCSV = () => {
+    const csvHeaders = headers.map(h => formatKey(h)).join(",");
+    const csvLines = sortedRows.map(row => 
+      headers.map(h => {
+        let val = row[h];
+        if (val === null || val === undefined) return '""';
+        if (typeof val === "object") val = JSON.stringify(val);
+        return `"${String(val).replace(/"/g, '""')}"`;
+      }).join(",")
+    );
+    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + [csvHeaders, ...csvLines].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `${title.toLowerCase().replace(/[^a-z0-9]+/g, "_")}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleExportExcel = () => {
+    const headersStr = headers.map(h => formatKey(h)).join("\t");
+    const rowsStr = sortedRows.map(row => 
+      headers.map(h => {
+        let val = row[h];
+        if (val === null || val === undefined) return "";
+        if (typeof val === "object") val = JSON.stringify(val);
+        return String(val).replace(/\t/g, " ");
+      }).join("\t")
+    ).join("\n");
+    
+    const excelContent = "data:application/vnd.ms-excel;charset=utf-8,\uFEFF" + encodeURIComponent([headersStr, rowsStr].join("\n"));
+    const link = document.createElement("a");
+    link.setAttribute("href", excelContent);
+    link.setAttribute("download", `${title.toLowerCase().replace(/[^a-z0-9]+/g, "_")}.xls`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handlePrint = () => {
+    const printWindow = window.open("", "_blank");
+    const headersHtml = headers.map(h => `<th>${formatKey(h)}</th>`).join("");
+    const rowsHtml = sortedRows.map(row => 
+      `<tr>${headers.map(h => {
+        let val = row[h];
+        if (val === null || val === undefined) return "<td>-</td>";
+        if (typeof val === "object") val = JSON.stringify(val);
+        return `<td>${String(val)}</td>`;
+      }).join("")}</tr>`
+    ).join("");
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>${title}</title>
+          <style>
+            body { font-family: system-ui, -apple-system, sans-serif; padding: 30px; background-color: #ffffff; color: #1e293b; }
+            h2 { color: #0f172a; font-size: 20px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin-bottom: 20px; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #cbd5e1; padding: 8px 12px; text-align: left; font-size: 12px; }
+            th { background-color: #f8fafc; font-weight: bold; color: #475569; }
+            tr:nth-child(even) { background-color: #f8fafc; }
+          </style>
+        </head>
+        <body onload="window.print(); window.close();">
+          <h2>${title}</h2>
+          <table>
+            <thead><tr>${headersHtml}</tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  return (
+    <div className="bg-slate-900/30 backdrop-blur-md rounded-2xl border border-slate-800 shadow-xl overflow-hidden animate-fade-in w-full">
+      {/* Table Toolbar */}
+      <div className="p-4 border-b border-slate-800/80 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 bg-slate-950/20">
+        <div className="flex items-center gap-2.5">
+          {Icon && <Icon className="text-cyan-400 shrink-0" size={18} />}
+          <span className="text-xs font-extrabold text-slate-200 uppercase tracking-wider">{title}</span>
+          <span className="text-[9px] bg-slate-800 border border-slate-700/60 text-slate-400 px-2 py-0.5 rounded-full font-mono font-bold">
+            {totalRows} {totalRows === 1 ? "entry" : "entries"}
+          </span>
+        </div>
+        
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Search Input */}
+          <div className="relative w-full sm:w-auto">
+            <input
+              type="text"
+              placeholder="Search..."
+              value={searchQuery}
+              onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+              className="bg-slate-950/80 text-slate-200 text-xs px-3 py-1.5 pl-8 rounded-xl border border-slate-800 focus:outline-none focus:border-cyan-500 w-full sm:w-44 placeholder-slate-650 transition-all font-semibold"
+            />
+            <svg className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
+
+          {/* Export Actions */}
+          <div className="flex items-center gap-1.5 border-l border-slate-800/80 pl-2">
+            <button
+              onClick={handleExportCSV}
+              title="Export CSV"
+              className="px-2 py-1 bg-slate-800/80 hover:bg-slate-700 hover:text-white border border-slate-750 text-slate-300 rounded-lg text-[9px] font-bold uppercase transition-colors"
+            >
+              CSV
+            </button>
+            <button
+              onClick={handleExportExcel}
+              title="Export XLS"
+              className="px-2 py-1 bg-slate-800/80 hover:bg-slate-700 hover:text-white border border-slate-750 text-slate-300 rounded-lg text-[9px] font-bold uppercase transition-colors"
+            >
+              XLS
+            </button>
+            <button
+              onClick={handlePrint}
+              title="Print PDF"
+              className="px-2 py-1 bg-slate-800/80 hover:bg-slate-700 hover:text-white border border-slate-750 text-slate-300 rounded-lg text-[9px] font-bold uppercase transition-colors"
+            >
+              PDF
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Table Content */}
+      <div className="overflow-x-auto custom-scrollbar">
+        <table className="min-w-full divide-y divide-slate-800/60 text-xs font-semibold">
+          <thead className="bg-slate-950/60 text-slate-500 uppercase font-bold text-[9px] tracking-wider">
+            <tr>
+              {headers.map(h => (
+                <th
+                  key={h}
+                  onClick={() => handleSort(h)}
+                  className="px-4 py-3 text-left border-r border-slate-900/30 cursor-pointer hover:bg-slate-900/20 hover:text-slate-300 transition-colors"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span>{formatKey(h)}</span>
+                    {sortField === h ? (
+                      sortDirection === "asc" ? (
+                        <svg className="h-3 w-3 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" />
+                        </svg>
+                      ) : (
+                        <svg className="h-3 w-3 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      )
+                    ) : (
+                      <svg className="h-2.5 w-2.5 text-slate-700 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
+                      </svg>
+                    )}
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="bg-slate-950/10 divide-y divide-slate-800/40 text-slate-300">
+            {currentRows.length > 0 ? (
+              currentRows.map((row, idx) => (
+                <tr key={idx} className="hover:bg-slate-900/10 transition-colors">
+                  {headers.map(h => {
+                    const rawVal = row[h];
+                    let cellVal = formatValue(rawVal, h);
+                    
+                    if (rawVal !== null && typeof rawVal === "object" && !Array.isArray(rawVal)) {
+                      cellVal = (
+                        <div className="space-y-1.5 py-1.5 font-mono text-[10px] text-slate-400 leading-relaxed">
+                          {Object.entries(rawVal).map(([subK, subV]) => (
+                            <div key={subK} className="flex items-baseline gap-1.5">
+                              <span className="text-slate-550 font-semibold">{formatKey(subK)}:</span>
+                              <span className="text-slate-200 font-bold">{formatValue(subV, subK)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    } else if (Array.isArray(rawVal)) {
+                      cellVal = (
+                        <div className="flex flex-wrap gap-1 py-1">
+                          {rawVal.map((item, i) => (
+                            <span key={i} className="inline-block px-1.5 py-0.5 bg-slate-800 border border-slate-700/60 rounded text-[10px] text-slate-300 font-mono">
+                              {typeof item === "object" ? JSON.stringify(item) : String(item)}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    }
+                    
+                    const isKeyColumn = !isArray && h === "parameter";
+                    return (
+                      <td 
+                        key={h} 
+                        className={`px-4 py-3.5 border-r border-slate-900/30 ${isKeyColumn ? "font-bold text-slate-400 w-1/3 bg-slate-950/10 uppercase tracking-wide text-[10px]" : "text-slate-200"}`}
+                      >
+                        {isKeyColumn ? formatKey(rawVal) : cellVal}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={headers.length} className="px-4 py-8 text-center text-slate-600 font-medium">
+                  No matching data found.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Table Pagination */}
+      {totalPages > 1 && (
+        <div className="p-3 border-t border-slate-800/80 bg-slate-950/20 flex items-center justify-between gap-4 text-[10px] font-bold text-slate-450 uppercase tracking-wider">
+          <div className="flex items-center gap-1.5">
+            <span>Show</span>
+            <select
+              value={rowsPerPage}
+              onChange={(e) => { setRowsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+              className="bg-slate-950 border border-slate-800 text-slate-300 rounded-lg px-2 py-1 focus:outline-none focus:border-cyan-500 font-extrabold"
+            >
+              {[5, 10, 20, 50].map(n => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+            <span>entries</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handlePageChange(currentPage - 1)}
+              disabled={currentPage === 1}
+              className={`px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-750 text-slate-300 transition-colors ${currentPage === 1 ? "opacity-30 cursor-not-allowed" : "hover:bg-slate-700 hover:text-white"}`}
+            >
+              Prev
+            </button>
+            <span className="font-mono text-slate-300 lowercase font-medium">
+              page {currentPage} of {totalPages}
+            </span>
+            <button
+              onClick={() => handlePageChange(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              className={`px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-750 text-slate-300 transition-colors ${currentPage === totalPages ? "opacity-30 cursor-not-allowed" : "hover:bg-slate-700 hover:text-white"}`}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('ingest'); // 'ingest' or 'historical'
+  const [uploadedFilename, setUploadedFilename] = useState(null);
 
   // File upload states
   const [file, setFile] = useState(null);
@@ -503,6 +930,7 @@ export default function Dashboard() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setUploadedFilename(null);
 
     const formData = new FormData();
     formData.append('file', file);
@@ -516,6 +944,7 @@ export default function Dashboard() {
       const data = await response.json();
       if (data.error) throw new Error(data.error);
       setResult(data.data);
+      setUploadedFilename(data.filename);
     } catch (err) {
       setError(err.message || "Failed to process document.");
     } finally {
@@ -526,6 +955,7 @@ export default function Dashboard() {
   const handleCloseRecord = () => {
     setResult(null);
     setFile(null);
+    setUploadedFilename(null);
     setProcessedRows([]);
   };
 
@@ -690,349 +1120,63 @@ export default function Dashboard() {
           </div>
           {/* Extracted Data Blocks */}
           {result && (
-            <div className="space-y-8 animate-fade-in">
-              
-              {/* Top 3 Cards for Queue Pages */}
-              {(() => {
-                const activePage = result.queue_pages?.[0] || {};
-                const prod = activePage.production_plan || result.product_details || {};
-                const pour = activePage.pouring_details || result.pouring_details || {};
-                const qa = activePage.qa_parameters || result.inspection_parameters || {};
-                
-                const heatNo = activePage.production_plan?.heat_no || result.document_metadata?.heat_no || 'N/A';
-                const date = activePage.production_plan?.pouring_date || activePage.production_plan?.planning_date || result.pouring_details?.date || result.document_metadata?.date || 'N/A';
-                const customer = prod.customer || 'Unknown';
-                const grade = prod.grade || 'N/A';
-                
-                const tappingTemp = pour.tapping_temp || pour.tapping_temperature || '-';
-                const pouredWeight = pour.pouring_weight || '-';
-                const pouringTempsRaw = pour.pouring_temp || pour.pouring_temperature || '';
-                
-                const mouldHardness = qa.hardness_mould || qa.mould_hardness_range || '-';
-                const coreHardness = qa.hardness_core || qa.core_hardness_range || '-';
-                const castingWeight = prod.casting_weight || '-';
-                
-                return (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-fade-in">
-                    
-                    {/* Document Info Card */}
-                    <div className="bg-gradient-to-br from-slate-900/90 to-slate-950/70 p-6 rounded-2xl border border-slate-800 shadow-xl relative overflow-hidden group">
-                      <div className="absolute top-0 right-0 p-6 opacity-[0.02] group-hover:opacity-[0.05] transition-opacity pointer-events-none">
-                        <Calendar size={120} className="text-slate-100" />
-                      </div>
-                      <div className="flex items-center gap-3 mb-6">
-                        <div className="p-2.5 rounded-xl bg-cyan-950 text-cyan-400 border border-cyan-800/40">
-                          <Calendar size={18} />
-                        </div>
-                        <h3 className="text-base font-extrabold text-slate-100 uppercase tracking-wider">Document Info</h3>
-                      </div>
-                      <div className="grid grid-cols-2 gap-6 text-sm font-semibold">
-                        <div className="space-y-1">
-                          <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Pouring Date</span>
-                          <strong className="text-slate-200 text-base font-semibold">{date}</strong>
-                        </div>
-                        <div className="space-y-1">
-                          <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Heat No</span>
-                          <strong className="text-cyan-400 text-base font-semibold font-mono">{heatNo}</strong>
-                        </div>
-                        <div className="space-y-1 col-span-2">
-                          <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Customer & Grade</span>
-                          <strong className="text-slate-200 text-sm font-semibold truncate block">
-                            {customer} <span className="text-slate-550 px-1">|</span> {grade}
-                          </strong>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Pouring Metrics Card */}
-                    <div className="bg-gradient-to-br from-slate-900/90 to-slate-950/70 p-6 rounded-2xl border border-slate-800 shadow-xl relative overflow-hidden group">
-                      <div className="absolute top-0 right-0 p-6 opacity-[0.02] group-hover:opacity-[0.05] transition-opacity pointer-events-none">
-                        <Flame size={120} className="text-slate-100" />
-                      </div>
-                      <div className="flex items-center gap-3 mb-6">
-                        <div className="p-2.5 rounded-xl bg-orange-950 text-orange-400 border border-orange-855/40">
-                          <Flame size={18} />
-                        </div>
-                        <h3 className="text-base font-extrabold text-slate-100 uppercase tracking-wider">Pouring Metrics</h3>
-                      </div>
-                      <div className="grid grid-cols-2 gap-6 text-sm font-semibold">
-                        <div className="space-y-1">
-                          <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Tapping Temp</span>
-                          <strong className="text-rose-400 text-base font-semibold flex items-center gap-1 font-mono">
-                            <Thermometer size={15} />{tappingTemp}
-                          </strong>
-                        </div>
-                        <div className="space-y-1">
-                          <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Poured Weight</span>
-                          <strong className="text-slate-200 text-base font-semibold font-mono">{pouredWeight}</strong>
-                        </div>
-                        <div className="space-y-1 col-span-2">
-                          <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Pouring Temperatures</span>
-                          <div className="flex flex-wrap gap-2 mt-1.5">
-                            {pouringTempsRaw ? (
-                              pouringTempsRaw.split(',').map((temp, i) => (
-                                <span key={i} className="px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-mono font-bold">
-                                  {temp.trim()}
-                                </span>
-                              ))
-                            ) : (<span className="text-slate-550 text-xs">N/A</span>)}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Quality Assurance Card */}
-                    <div className="bg-gradient-to-br from-slate-900/90 to-slate-950/70 p-6 rounded-2xl border border-slate-800 shadow-xl relative overflow-hidden group">
-                      <div className="absolute top-0 right-0 p-6 opacity-[0.02] group-hover:opacity-[0.05] transition-opacity pointer-events-none">
-                        <ShieldCheck size={120} className="text-slate-100" />
-                      </div>
-                      <div className="flex items-center gap-3 mb-6">
-                        <div className="p-2.5 rounded-xl bg-emerald-950 text-emerald-400 border border-emerald-800/40">
-                          <ShieldCheck size={18} />
-                        </div>
-                        <h3 className="text-base font-extrabold text-slate-100 uppercase tracking-wider">Quality Assurance</h3>
-                      </div>
-                      <div className="grid grid-cols-2 gap-6 text-sm font-semibold">
-                        <div className="space-y-1">
-                          <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Mould Hardness</span>
-                          <strong className="text-emerald-400 text-base font-semibold font-mono">{mouldHardness}</strong>
-                        </div>
-                        <div className="space-y-1">
-                          <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Core Hardness</span>
-                          <strong className="text-emerald-400 text-base font-semibold font-mono">{coreHardness}</strong>
-                        </div>
-                        <div className="space-y-1 col-span-2">
-                          <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Casting Weight (Plan)</span>
-                          <strong className="text-slate-200 text-sm font-semibold truncate block font-mono">
-                            {castingWeight ? `${castingWeight} kg` : 'N/A'}
-                          </strong>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* --------------------------------------------------------- */}
-              {/* NEW: FULL EXTRACTED QUEUE DATA TABLE                      */}
-              {/* --------------------------------------------------------- */}
-              <div className="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800 shadow-xl overflow-hidden mt-8 animate-fade-in">
-                <div className="p-6 border-b border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                  <div>
-                    <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-                      <Scale size={20} className="text-cyan-400" />
-                      <span>Extracted Queue Records (Pages 1-5)</span>
-                    </h3>
-                    <p className="text-slate-400 text-xs mt-1 font-semibold">
-                      Comprehensive mapping of all handwritten and printed parameters across the production sequence.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto custom-scrollbar">
-                  <table className="min-w-full divide-y divide-slate-800 text-xs font-semibold">
-                    <thead className="bg-slate-950/60 text-slate-500 uppercase font-bold text-[9px] tracking-wider sticky top-0 z-10">
-                      <tr>
-                        <th className="px-4 py-4 text-center border-r border-slate-900/40">Page</th>
-                        <th className="px-4 py-4 text-left border-r border-slate-900/40">Heat No</th>
-                        <th className="px-4 py-4 text-left border-r border-slate-900/40">Pour Date</th>
-                        <th className="px-4 py-4 text-left border-r border-slate-900/40 min-w-[150px]">Customer</th>
-                        <th className="px-4 py-4 text-left border-r border-slate-900/40">Grade</th>
-                        <th className="px-4 py-4 text-right border-r border-slate-900/40">Cast Wt</th>
-                        <th className="px-4 py-4 text-right border-r border-slate-900/40">Mould Hardness</th>
-                        <th className="px-4 py-4 text-right border-r border-slate-900/40">Core Hardness</th>
-                        <th className="px-4 py-4 text-center border-r border-slate-900/40">Pour Time</th>
-                        <th className="px-4 py-4 text-center border-r border-slate-900/40">Tapping Temp</th>
-                        <th className="px-4 py-4 text-center border-r border-slate-900/40 min-w-[120px]">Pouring Temp</th>
-                        <th className="px-4 py-4 text-center border-r border-slate-900/40">Ladle Temp</th>
-                        <th className="px-4 py-4 text-right">Pour Wt</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-slate-950/10 divide-y divide-slate-800/40 text-slate-300">
-                      {processedRows && processedRows.length > 0 ? (
-                        processedRows.map((row, idx) => {
-                          return (
-                            <tr key={idx} className="hover:bg-slate-900/40 transition-colors">
-                              <td className="px-4 py-3.5 text-center border-r border-slate-900/40 font-bold text-slate-500">
-                                {row.sequence}
-                              </td>
-                              <td className="px-4 py-3.5 border-r border-slate-900/40 font-mono text-cyan-400 font-bold">
-                                {row.heatNo || '-'}
-                              </td>
-                              <td className="px-4 py-3.5 border-r border-slate-900/40 text-slate-400">
-                                {row.date || '-'}
-                              </td>
-                              <td className="px-4 py-3.5 border-r border-slate-900/40 text-slate-200">
-                                {row.customer || '-'}
-                              </td>
-                              <td className="px-4 py-3.5 border-r border-slate-900/40">
-                                {row.grade ? (
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-900 border border-slate-800 text-slate-400">
-                                    {row.grade}
-                                  </span>
-                                ) : '-'}
-                              </td>
-                              <td className="px-4 py-3.5 text-right border-r border-slate-900/40 font-mono text-slate-300">
-                                {row.rawCastingWeight || '-'}
-                              </td>
-                              <td className="px-4 py-3.5 text-right border-r border-slate-900/40 font-mono text-emerald-400">
-                                {row.rawMouldHardness || '-'}
-                              </td>
-                              <td className="px-4 py-3.5 text-right border-r border-slate-900/40 font-mono text-emerald-400">
-                                {row.rawCoreHardness || '-'}
-                              </td>
-                              <td className="px-4 py-3.5 text-center border-r border-slate-900/40 font-mono text-amber-500">
-                                {row.rawPourTime ? (
-                                  <span className="flex items-center justify-center gap-1">
-                                    <Clock size={12} className="opacity-60" /> {row.rawPourTime}
-                                  </span>
-                                ) : '-'}
-                              </td>
-                              <td className="px-4 py-3.5 text-center border-r border-slate-900/40 font-mono text-rose-400">
-                                {row.rawTappingTemp || '-'}
-                              </td>
-                              <td className="px-4 py-3.5 text-center border-r border-slate-900/40 font-mono">
-                                <div className="flex flex-wrap items-center justify-center gap-1">
-                                  {row.rawPouringTemp ? (
-                                    row.rawPouringTemp.split(',').map((t, i) => (
-                                      <span key={i} className="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded text-[10px]">
-                                        {t.trim()}
-                                      </span>
-                                    ))
-                                  ) : '-'}
-                                </div>
-                              </td>
-                              <td className="px-4 py-3.5 text-center border-r border-slate-900/40 font-mono text-amber-500">
-                                {row.rawLadleTemp || '-'}
-                              </td>
-                              <td className="px-4 py-3.5 text-right font-mono text-slate-200 font-bold">
-                                {row.rawPouringWeight || '-'}
-                              </td>
-                            </tr>
-                          );
-                        })
-                      ) : (
-                        <tr>
-                          <td colSpan="13" className="px-4 py-8 text-center text-slate-600 font-medium">
-                            No queue data extracted from this document.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              {/* --------------------------------------------------------- */}
-
-              {/* Batch Summary Table Block */}
-              <div className="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800 shadow-xl overflow-hidden mt-8 animate-fade-in">
-                <div className="p-6 border-b border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                  <div>
-                    <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-                      <Layers3 size={20} className="text-cyan-400" />
-                      <span>Batch Material Summary (Page 6)</span>
-                    </h3>
-                    <p className="text-slate-400 text-xs mt-1 font-semibold">Extracted inventory and material consumption records.</p>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto custom-scrollbar">
-                  <table className="min-w-full divide-y divide-slate-800 text-xs font-semibold">
-                    <thead className="bg-slate-950/60 text-slate-500 uppercase font-bold text-[9px] tracking-wider">
-                      <tr>
-                        <th className="px-6 py-4 text-left border-r border-slate-900/40">Material Code</th>
-                        <th className="px-6 py-4 text-left border-r border-slate-900/40">Description</th>
-                        <th className="px-6 py-4 text-left border-r border-slate-900/40">Batch No</th>
-                        <th className="px-6 py-4 text-right">Total Qty</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-slate-950/10 divide-y divide-slate-800/40 text-slate-300">
-                      {(() => {
-                        const batchData = result.tables?.batch_summary || result.batch_summary || [];
-                        return batchData && batchData.length > 0 ? (
-                          batchData.map((row, index) => (
-                            <tr key={index} className="hover:bg-slate-900/40 transition-colors">
-                              <td className="px-6 py-3.5 border-r border-slate-900/40 font-mono text-cyan-400">{row.material_code || '-'}</td>
-                              <td className="px-6 py-3.5 border-r border-slate-900/40 text-slate-200">{row.material_description || '-'}</td>
-                              <td className="px-6 py-3.5 border-r border-slate-900/40 text-slate-450">{row.batch_no || '-'}</td>
-                              <td className="px-6 py-3.5 text-right font-mono text-emerald-400 font-bold">{row.t_qty || '-'} {row.unit || ''}</td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr><td colSpan="4" className="px-6 py-8 text-center text-slate-600 font-medium">No batch data found in this document.</td></tr>
-                        );
-                      })()}
-                    </tbody>
-                  </table>
-                </div>
+            <>
+              <div className="grid grid-cols-1 xl:grid-cols-5 gap-8 items-start animate-fade-in">
+              {/* Left Column: Interactive Document Preview */}
+              <div className="xl:col-span-2">
+                <DocumentPreview file={file} filename={uploadedFilename} />
               </div>
 
-              {/* Dynamic sleeves and consumables grid */}
-              {result.tables && (result.tables.sleeves?.length > 0 || result.tables.consumables?.length > 0) && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
-                  {/* Sleeves Table */}
-                  {result.tables.sleeves?.length > 0 && (
-                    <div className="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800 shadow-xl overflow-hidden animate-fade-in">
-                      <div className="p-6 border-b border-slate-800">
-                        <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-                          <Layers3 size={20} className="text-indigo-400" />
-                          <span>Sleeves Specifications</span>
-                        </h3>
-                        <p className="text-slate-400 text-xs mt-1 font-semibold">Extracted sleeve consumption parameters.</p>
-                      </div>
-                      <div className="overflow-x-auto custom-scrollbar">
-                        <table className="min-w-full divide-y divide-slate-800 text-xs font-semibold">
-                          <thead className="bg-slate-950/60 text-slate-500 uppercase font-bold text-[9px] tracking-wider">
-                            <tr>
-                              <th className="px-6 py-4 text-left border-r border-slate-900/40">Sleeve Code</th>
-                              <th className="px-6 py-4 text-right">Quantity</th>
-                            </tr>
-                          </thead>
-                          <tbody className="bg-slate-950/10 divide-y divide-slate-800/40 text-slate-300">
-                            {result.tables.sleeves.map((row, index) => (
-                              <tr key={index} className="hover:bg-slate-900/40 transition-colors">
-                                <td className="px-6 py-3.5 border-r border-slate-900/40 font-mono text-cyan-400">{row.code || '-'}</td>
-                                <td className="px-6 py-3.5 text-right font-mono text-emerald-400 font-bold">{row.qty || '-'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
+              {/* Right Column: Dynamic Section Tables */}
+              <div className="xl:col-span-3 space-y-6">
+                {Object.entries(result).map(([sectionKey, sectionData]) => {
+                  // Skip system headers and flat values
+                  if (sectionKey === "error" || sectionKey === "message" || sectionKey === "filename" || sectionKey === "task_id") return null;
+                  if (!sectionData || typeof sectionData !== "object") return null;
 
-                  {/* Consumables Table */}
-                  {result.tables.consumables?.length > 0 && (
-                    <div className="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800 shadow-xl overflow-hidden animate-fade-in">
-                      <div className="p-6 border-b border-slate-800">
-                        <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-                          <Activity size={20} className="text-amber-400" />
-                          <span>Handwritten Consumables</span>
-                        </h3>
-                        <p className="text-slate-400 text-xs mt-1 font-semibold">Extracted handwritten sand, oil, and gas additions.</p>
-                      </div>
-                      <div className="overflow-x-auto custom-scrollbar">
-                        <table className="min-w-full divide-y divide-slate-800 text-xs font-semibold">
-                          <thead className="bg-slate-950/60 text-slate-500 uppercase font-bold text-[9px] tracking-wider">
-                            <tr>
-                              <th className="px-6 py-4 text-left border-r border-slate-900/40">Consumable Item</th>
-                              <th className="px-6 py-4 text-right">Quantity</th>
-                            </tr>
-                          </thead>
-                          <tbody className="bg-slate-950/10 divide-y divide-slate-800/40 text-slate-300">
-                            {result.tables.consumables.map((row, index) => (
-                              <tr key={index} className="hover:bg-slate-900/40 transition-colors">
-                                <td className="px-6 py-3.5 border-r border-slate-900/40 text-slate-200">{row.item || '-'}</td>
-                                <td className="px-6 py-3.5 text-right font-mono text-emerald-400 font-bold">{row.qty || '-'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+                  // Render nested lists inside the "tables" key as individual tables
+                  if (sectionKey === "tables") {
+                    return Object.entries(sectionData).map(([subTableKey, subTableData]) => {
+                      if (!subTableData || !Array.isArray(subTableData)) return null;
+                      
+                      // Choose icon based on table name
+                      let SubIcon = Layers3;
+                      const lowerSub = subTableKey.toLowerCase();
+                      if (lowerSub.includes("sleeve")) SubIcon = Layers3;
+                      else if (lowerSub.includes("consumable")) SubIcon = Activity;
+                      else if (lowerSub.includes("batch") || lowerSub.includes("summary")) SubIcon = Scale;
+                      
+                      return (
+                        <FioriSectionTable
+                          key={`${sectionKey}-${subTableKey}`}
+                          title={formatKey(subTableKey)}
+                          data={subTableData}
+                          icon={SubIcon}
+                        />
+                      );
+                    });
+                  }
+
+                  // Choose icon based on section key
+                  let SectionIcon = FileText;
+                  const lowerKey = sectionKey.toLowerCase();
+                  if (lowerKey.includes("metadata") || lowerKey.includes("header")) SectionIcon = Info;
+                  else if (lowerKey.includes("product") || lowerKey.includes("detail")) SectionIcon = Layers3;
+                  else if (lowerKey.includes("inspection") || lowerKey.includes("parameter")) SectionIcon = ShieldCheck;
+                  else if (lowerKey.includes("pouring")) SectionIcon = Flame;
+                  else if (lowerKey.includes("signature")) SectionIcon = ShieldCheck;
+
+                  return (
+                    <FioriSectionTable
+                      key={sectionKey}
+                      title={formatKey(sectionKey)}
+                      data={sectionData}
+                      icon={SectionIcon}
+                    />
+                  );
+                })}
+              </div>
+            </div>
 
               {/* Graphical Recharts Dashboards */}
               <div className="space-y-8 pt-4">
@@ -1144,7 +1288,7 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-            </div>
+            </>
           )}
         </div>
       )}
