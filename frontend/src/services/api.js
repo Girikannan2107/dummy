@@ -1,13 +1,13 @@
 import axios from 'axios';
 
-// Create a custom axios instance with a 60-second timeout
-const apiClient = axios.create({
-    baseURL: 'http://localhost:8000/api/v1',
-    timeout: 60000, // Important: 60 seconds (Wait for Gemini 6-page vision processing)
-});
-
 // Vite uses import.meta.env instead of process.env
 export const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
+
+// Create a custom axios instance with a 60-second timeout
+const apiClient = axios.create({
+    baseURL: API_BASE_URL,
+    timeout: 60000, // Important: 60 seconds (Wait for Gemini 6-page vision processing)
+});
 
 export const documentApi = {
     // Post the document directly and wait for the final JSON
@@ -30,6 +30,28 @@ export const documentApi = {
     
     // Download the separated Excel sheets
     downloadExcel: async () => {
-        window.open('http://localhost:8000/api/v1/documents/export', '_blank');
+        window.open(`${API_BASE_URL}/documents/export`, '_blank');
+    },
+
+    getAllDocuments: async () => {
+        try {
+            const response = await apiClient.get('/documents');
+            return response.data;
+        } catch (error) {
+            console.error("Failed to fetch documents:", error);
+            throw error;
+        }
+    },
+
+    exportDocuments: async () => {
+        try {
+            const response = await apiClient.get('/documents/export', {
+                responseType: 'blob'
+            });
+            return response.data;
+        } catch (error) {
+            console.error("Failed to export documents:", error);
+            throw error;
+        }
     }
 };

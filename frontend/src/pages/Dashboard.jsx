@@ -41,7 +41,7 @@ import {
   Area,
   ReferenceLine
 } from 'recharts';
-import { documentApi } from '../services/api';
+import { documentApi, API_BASE_URL } from '../services/api';
 
 // Harmonious industrial color palette for up to 10 heat series
 const HEAT_COLORS = [
@@ -136,7 +136,8 @@ function DocumentPreview({ file, filename }) {
     );
   }
 
-  const url = file ? URL.createObjectURL(file) : `http://127.0.0.1:8000/uploads/${filename}`;
+  const uploadsBaseUrl = API_BASE_URL.replace('/api/v1', '/uploads');
+  const url = file ? URL.createObjectURL(file) : `${uploadsBaseUrl}/${filename}`;
   const isPDF = file ? file.type === "application/pdf" : filename.toLowerCase().endsWith(".pdf");
 
   return (
@@ -947,7 +948,7 @@ export default function Dashboard() {
     formData.append('file', file);
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/v1/documents/process?page=0', {
+      const response = await fetch(`${API_BASE_URL}/documents/process?page=0`, {
         method: 'POST',
         body: formData,
       });
@@ -974,7 +975,7 @@ export default function Dashboard() {
     
     try {
       const nextPage = currentPage + 1;
-      const response = await fetch(`http://127.0.0.1:8000/api/v1/documents/process?page=${nextPage}&filename=${uploadedFilename}&task_id=${taskId}`, {
+      const response = await fetch(`${API_BASE_URL}/documents/process?page=${nextPage}&filename=${uploadedFilename}&task_id=${taskId}`, {
         method: 'POST'
       });
       if (!response.ok) throw new Error(`Server responded with status: ${response.status}`);
