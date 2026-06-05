@@ -143,10 +143,74 @@ export default function Dashboard() {
           excessMetal: 0, 
           weightDiff: pouredWeight - plannedWeight,
           sequence: idx + 1,
-          observation: "Queue Record"
+          observation: "Queue Record",
+          rawMouldHardness: page.qa_parameters?.hardness_mould || "-",
+          rawCoreHardness: page.qa_parameters?.hardness_core || "-",
+          rawPourTime: pour.pouring_time || "-",
+          rawLadleTemp: pour.laddle_temp || "-",
+          rawCastingWeight: prod.casting_weight || "-",
+          rawPouringWeight: pour.pouring_weight || "-",
+          rawTappingTemp: pour.tapping_temp || "-",
+          rawPouringTemp: pour.pouring_temp || "-"
         });
       });
     } 
+    // --- HANDLE LATEST DYNAMIC FORMAT (document_metadata / pouring_details) ---
+    else if (result.document_metadata || result.pouring_details) {
+      const metadata = result.document_metadata || {};
+      const prodDetails = result.product_details || {};
+      const pourDetails = result.pouring_details || {};
+      const inspectParams = result.inspection_parameters || {};
+      
+      const rawTapping = pourDetails.tapping_temperature || "";
+      const tappingTemp = parseFloat(rawTapping.replace(/[^0-9.]/g, "")) || 1640;
+      
+      const tempsStr = pourDetails.pouring_temperature || "";
+      const temps = tempsStr ? tempsStr.split(',').map(t => t.trim()) : [];
+      
+      const durationStr = pourDetails.duration || "";
+      const durations = durationStr ? durationStr.split(',').map(d => d.trim()) : [];
+      
+      const count = Math.max(temps.length, 1);
+      
+      for (let i = 0; i < count; i++) {
+        const tVal = temps[i] || "";
+        const pouringTemp = parseFloat(tVal.replace(/[^0-9.]/g, "")) || (tappingTemp - 20 - (i * 5));
+        
+        const dVal = durations[i] || "";
+        const pouringTimeSec = parseFloat(dVal.replace(/[^0-9.]/g, "")) || (15 + i * 5);
+        
+        const pouredWeight = parseFloat((pourDetails.pouring_weight || "").replace(/[^0-9.]/g, "")) || 0;
+        const plannedWeight = parseFloat((prodDetails.casting_weight || "").replace(/[^0-9.]/g, "")) || pouredWeight || 0;
+        
+        rows.push({
+          id: `pour-${i}`,
+          date: pourDetails.date || metadata.date || "N/A",
+          heatNo: metadata.heat_no || "N/A",
+          item: prodDetails.description || "Casting Queue Item",
+          grade: prodDetails.grade || "N/A",
+          customer: prodDetails.customer || "N/A",
+          plannedWeight,
+          pouredWeight,
+          pouringTemp,
+          tappingTemp,
+          pouringTimeSec,
+          tempLoss: tappingTemp - pouringTemp,
+          excessMetal: 0,
+          weightDiff: pouredWeight - plannedWeight,
+          sequence: i + 1,
+          observation: `Pour ${i + 1}`,
+          rawMouldHardness: inspectParams.mould_hardness_range || "-",
+          rawCoreHardness: inspectParams.core_hardness_range || "-",
+          rawPourTime: pourDetails.time || "-",
+          rawLadleTemp: pourDetails.laddle_temp || "-",
+          rawCastingWeight: prodDetails.casting_weight || "-",
+          rawPouringWeight: pourDetails.pouring_weight || "-",
+          rawTappingTemp: pourDetails.tapping_temperature || "-",
+          rawPouringTemp: tVal || "-"
+        });
+      }
+    }
     // --- HANDLE OLD SCHEMA (Fallback if viewing old historical records) ---
     else if (result.table_data) {
       const docInfo = result.document_info || {};
@@ -182,7 +246,15 @@ export default function Dashboard() {
           excessMetal: parseFloat(details.excess_metal_ingot_kg) || 0,
           weightDiff,
           sequence: parseInt(row.pouring_sequence) || parseInt(row.tapping_sequence) || (idx + 1),
-          observation: row.pouring_observation || "Normal pouring run"
+          observation: row.pouring_observation || "Normal pouring run",
+          rawMouldHardness: row.mould_hardness || "-",
+          rawCoreHardness: row.core_hardness || "-",
+          rawPourTime: row.pouring_time || "-",
+          rawLadleTemp: details.laddle_temp || "-",
+          rawCastingWeight: row.planned_pouring_weight || "-",
+          rawPouringWeight: row.actual_liquid_poured_kg || "-",
+          rawTappingTemp: details.tapping_temperature || "-",
+          rawPouringTemp: row.pouring_temperature || "-"
         });
       });
     }
@@ -228,8 +300,10 @@ export default function Dashboard() {
         const heatMap = {};
 
         data.forEach((doc) => {
+          if (!doc.extracted_data) return;
+
           // Check for NEW Schema first
-          if (doc.extracted_data?.queue_pages) {
+          if (doc.extracted_data.queue_pages) {
             doc.extracted_data.queue_pages.forEach((page, idx) => {
               const heatNo = page.production_plan?.heat_no || "N/A";
               if (heatNo === "N/A") return;
@@ -249,8 +323,42 @@ export default function Dashboard() {
               }
             });
           } 
+          // Check for latest JSON format
+          else if (doc.extracted_data.document_metadata || doc.extracted_data.pouring_details) {
+            const metadata = doc.extracted_data.document_metadata || {};
+            const pourDetails = doc.extracted_data.pouring_details || {};
+            const prodDetails = doc.extracted_data.product_details || {};
+            const heatNo = metadata.heat_no || "N/A";
+            
+            if (heatNo !== "N/A") {
+              if (!heatMap[heatNo]) heatMap[heatNo] = [];
+              
+              const tempsStr = pourDetails.pouring_temperature || "";
+              const temps = tempsStr ? tempsStr.split(',').map(t => t.trim()) : [];
+              const durationStr = pourDetails.duration || "";
+              const durations = durationStr ? durationStr.split(',').map(d => d.trim()) : [];
+              const count = Math.max(temps.length, 1);
+              
+              for (let i = 0; i < count; i++) {
+                const tVal = temps[i] || "";
+                const dVal = durations[i] || "";
+                const pouringTimeSec = parseFloat(dVal.replace(/[^0-9.]/g, "")) || 45;
+                const pouredWeight = parseFloat((pourDetails.pouring_weight || "").replace(/[^0-9.]/g, "")) || 0;
+                
+                if (pouredWeight > 0 || pouringTimeSec > 0) {
+                  heatMap[heatNo].push({
+                    pouredWeight,
+                    pouringTimeSec,
+                    sequence: i + 1,
+                    item: prodDetails.description || "Queue Item",
+                    customer: prodDetails.customer || "N/A"
+                  });
+                }
+              }
+            }
+          }
           // Check for OLD schema fallback
-          else if (doc.extracted_data?.table_data) {
+          else if (doc.extracted_data.table_data) {
             const docInfo = doc.extracted_data.document_info || {};
             const heatNo = docInfo.heat_no || "N/A";
             if (heatNo === "N/A") return;
@@ -580,7 +688,6 @@ export default function Dashboard() {
               )}
             </div>
           </div>
-
           {/* Extracted Data Blocks */}
           {result && (
             <div className="space-y-8 animate-fade-in">
@@ -588,9 +695,22 @@ export default function Dashboard() {
               {/* Top 3 Cards for Queue Pages */}
               {(() => {
                 const activePage = result.queue_pages?.[0] || {};
-                const prod = activePage.production_plan || {};
-                const pour = activePage.pouring_details || {};
-                const qa = activePage.qa_parameters || {};
+                const prod = activePage.production_plan || result.product_details || {};
+                const pour = activePage.pouring_details || result.pouring_details || {};
+                const qa = activePage.qa_parameters || result.inspection_parameters || {};
+                
+                const heatNo = activePage.production_plan?.heat_no || result.document_metadata?.heat_no || 'N/A';
+                const date = activePage.production_plan?.pouring_date || activePage.production_plan?.planning_date || result.pouring_details?.date || result.document_metadata?.date || 'N/A';
+                const customer = prod.customer || 'Unknown';
+                const grade = prod.grade || 'N/A';
+                
+                const tappingTemp = pour.tapping_temp || pour.tapping_temperature || '-';
+                const pouredWeight = pour.pouring_weight || '-';
+                const pouringTempsRaw = pour.pouring_temp || pour.pouring_temperature || '';
+                
+                const mouldHardness = qa.hardness_mould || qa.mould_hardness_range || '-';
+                const coreHardness = qa.hardness_core || qa.core_hardness_range || '-';
+                const castingWeight = prod.casting_weight || '-';
                 
                 return (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-fade-in">
@@ -608,17 +728,17 @@ export default function Dashboard() {
                       </div>
                       <div className="grid grid-cols-2 gap-6 text-sm font-semibold">
                         <div className="space-y-1">
-                          <span className="text-slate-500 text-[10px] uppercase tracking-wider block font-bold">Pouring Date</span>
-                          <strong className="text-slate-200 text-base font-semibold">{prod.pouring_date || prod.planning_date || 'N/A'}</strong>
+                          <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Pouring Date</span>
+                          <strong className="text-slate-200 text-base font-semibold">{date}</strong>
                         </div>
                         <div className="space-y-1">
-                          <span className="text-slate-500 text-[10px] uppercase tracking-wider block font-bold">Heat No</span>
-                          <strong className="text-cyan-400 text-base font-semibold font-mono">{prod.heat_no || 'N/A'}</strong>
+                          <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Heat No</span>
+                          <strong className="text-cyan-400 text-base font-semibold font-mono">{heatNo}</strong>
                         </div>
                         <div className="space-y-1 col-span-2">
                           <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Customer & Grade</span>
                           <strong className="text-slate-200 text-sm font-semibold truncate block">
-                            {prod.customer || 'Unknown'} <span className="text-slate-500 px-1">|</span> {prod.grade || 'N/A'}
+                            {customer} <span className="text-slate-550 px-1">|</span> {grade}
                           </strong>
                         </div>
                       </div>
@@ -639,18 +759,18 @@ export default function Dashboard() {
                         <div className="space-y-1">
                           <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Tapping Temp</span>
                           <strong className="text-rose-400 text-base font-semibold flex items-center gap-1 font-mono">
-                            <Thermometer size={15} />{pour.tapping_temp || '-'}
+                            <Thermometer size={15} />{tappingTemp}
                           </strong>
                         </div>
                         <div className="space-y-1">
                           <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Poured Weight</span>
-                          <strong className="text-slate-200 text-base font-semibold font-mono">{pour.pouring_weight || '-'}</strong>
+                          <strong className="text-slate-200 text-base font-semibold font-mono">{pouredWeight}</strong>
                         </div>
                         <div className="space-y-1 col-span-2">
                           <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Pouring Temperatures</span>
                           <div className="flex flex-wrap gap-2 mt-1.5">
-                            {pour.pouring_temp ? (
-                              pour.pouring_temp.split(',').map((temp, i) => (
+                            {pouringTempsRaw ? (
+                              pouringTempsRaw.split(',').map((temp, i) => (
                                 <span key={i} className="px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-mono font-bold">
                                   {temp.trim()}
                                 </span>
@@ -674,17 +794,17 @@ export default function Dashboard() {
                       </div>
                       <div className="grid grid-cols-2 gap-6 text-sm font-semibold">
                         <div className="space-y-1">
-                          <span className="text-slate-500 text-[10px] uppercase tracking-wider block font-bold">Mould Hardness</span>
-                          <strong className="text-emerald-400 text-base font-semibold font-mono">{qa.hardness_mould || '-'}</strong>
+                          <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Mould Hardness</span>
+                          <strong className="text-emerald-400 text-base font-semibold font-mono">{mouldHardness}</strong>
                         </div>
                         <div className="space-y-1">
-                          <span className="text-slate-500 text-[10px] uppercase tracking-wider block font-bold">Core Hardness</span>
-                          <strong className="text-emerald-400 text-base font-semibold font-mono">{qa.hardness_core || '-'}</strong>
+                          <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Core Hardness</span>
+                          <strong className="text-emerald-400 text-base font-semibold font-mono">{coreHardness}</strong>
                         </div>
                         <div className="space-y-1 col-span-2">
                           <span className="text-slate-550 text-[10px] uppercase tracking-wider block font-bold">Casting Weight (Plan)</span>
                           <strong className="text-slate-200 text-sm font-semibold truncate block font-mono">
-                            {prod.casting_weight ? `${prod.casting_weight} kg` : 'N/A'}
+                            {castingWeight ? `${castingWeight} kg` : 'N/A'}
                           </strong>
                         </div>
                       </div>
@@ -694,7 +814,7 @@ export default function Dashboard() {
               })()}
 
               {/* --------------------------------------------------------- */}
-              {/* NEW: FULL EXTRACTED QUEUE DATA TABLE (PAGES 1-5)          */}
+              {/* NEW: FULL EXTRACTED QUEUE DATA TABLE                      */}
               {/* --------------------------------------------------------- */}
               <div className="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800 shadow-xl overflow-hidden mt-8 animate-fade-in">
                 <div className="p-6 border-b border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -729,56 +849,52 @@ export default function Dashboard() {
                       </tr>
                     </thead>
                     <tbody className="bg-slate-950/10 divide-y divide-slate-800/40 text-slate-300">
-                      {result.queue_pages && result.queue_pages.length > 0 ? (
-                        result.queue_pages.map((page, idx) => {
-                          const pPlan = page.production_plan || {};
-                          const qa = page.qa_parameters || {};
-                          const pour = page.pouring_details || {};
-                          
+                      {processedRows && processedRows.length > 0 ? (
+                        processedRows.map((row, idx) => {
                           return (
                             <tr key={idx} className="hover:bg-slate-900/40 transition-colors">
                               <td className="px-4 py-3.5 text-center border-r border-slate-900/40 font-bold text-slate-500">
-                                {page.page_number || idx + 1}
+                                {row.sequence}
                               </td>
                               <td className="px-4 py-3.5 border-r border-slate-900/40 font-mono text-cyan-400 font-bold">
-                                {pPlan.heat_no || '-'}
+                                {row.heatNo || '-'}
                               </td>
                               <td className="px-4 py-3.5 border-r border-slate-900/40 text-slate-400">
-                                {pPlan.pouring_date || pPlan.planning_date || '-'}
+                                {row.date || '-'}
                               </td>
                               <td className="px-4 py-3.5 border-r border-slate-900/40 text-slate-200">
-                                {pPlan.customer || '-'}
+                                {row.customer || '-'}
                               </td>
                               <td className="px-4 py-3.5 border-r border-slate-900/40">
-                                {pPlan.grade ? (
+                                {row.grade ? (
                                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-900 border border-slate-800 text-slate-400">
-                                    {pPlan.grade}
+                                    {row.grade}
                                   </span>
                                 ) : '-'}
                               </td>
                               <td className="px-4 py-3.5 text-right border-r border-slate-900/40 font-mono text-slate-300">
-                                {pPlan.casting_weight || '-'}
+                                {row.rawCastingWeight || '-'}
                               </td>
                               <td className="px-4 py-3.5 text-right border-r border-slate-900/40 font-mono text-emerald-400">
-                                {qa.hardness_mould || '-'}
+                                {row.rawMouldHardness || '-'}
                               </td>
                               <td className="px-4 py-3.5 text-right border-r border-slate-900/40 font-mono text-emerald-400">
-                                {qa.hardness_core || '-'}
+                                {row.rawCoreHardness || '-'}
                               </td>
                               <td className="px-4 py-3.5 text-center border-r border-slate-900/40 font-mono text-amber-500">
-                                {pour.pouring_time ? (
+                                {row.rawPourTime ? (
                                   <span className="flex items-center justify-center gap-1">
-                                    <Clock size={12} className="opacity-60" /> {pour.pouring_time}
+                                    <Clock size={12} className="opacity-60" /> {row.rawPourTime}
                                   </span>
                                 ) : '-'}
                               </td>
                               <td className="px-4 py-3.5 text-center border-r border-slate-900/40 font-mono text-rose-400">
-                                {pour.tapping_temp || '-'}
+                                {row.rawTappingTemp || '-'}
                               </td>
                               <td className="px-4 py-3.5 text-center border-r border-slate-900/40 font-mono">
                                 <div className="flex flex-wrap items-center justify-center gap-1">
-                                  {pour.pouring_temp ? (
-                                    pour.pouring_temp.split(',').map((t, i) => (
+                                  {row.rawPouringTemp ? (
+                                    row.rawPouringTemp.split(',').map((t, i) => (
                                       <span key={i} className="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded text-[10px]">
                                         {t.trim()}
                                       </span>
@@ -787,10 +903,10 @@ export default function Dashboard() {
                                 </div>
                               </td>
                               <td className="px-4 py-3.5 text-center border-r border-slate-900/40 font-mono text-amber-500">
-                                {pour.laddle_temp || '-'}
+                                {row.rawLadleTemp || '-'}
                               </td>
                               <td className="px-4 py-3.5 text-right font-mono text-slate-200 font-bold">
-                                {pour.pouring_weight || '-'}
+                                {row.rawPouringWeight || '-'}
                               </td>
                             </tr>
                           );
@@ -831,22 +947,92 @@ export default function Dashboard() {
                       </tr>
                     </thead>
                     <tbody className="bg-slate-950/10 divide-y divide-slate-800/40 text-slate-300">
-                      {result.batch_summary && result.batch_summary.length > 0 ? (
-                        result.batch_summary.map((row, index) => (
-                          <tr key={index} className="hover:bg-slate-900/40 transition-colors">
-                            <td className="px-6 py-3.5 border-r border-slate-900/40 font-mono text-cyan-400">{row.material_code || '-'}</td>
-                            <td className="px-6 py-3.5 border-r border-slate-900/40 text-slate-200">{row.material_description || '-'}</td>
-                            <td className="px-6 py-3.5 border-r border-slate-900/40 text-slate-450">{row.batch_no || '-'}</td>
-                            <td className="px-6 py-3.5 text-right font-mono text-emerald-400 font-bold">{row.t_qty || '-'} {row.unit || ''}</td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr><td colSpan="4" className="px-6 py-8 text-center text-slate-600 font-medium">No batch data found in this document (Array is empty).</td></tr>
-                      )}
+                      {(() => {
+                        const batchData = result.tables?.batch_summary || result.batch_summary || [];
+                        return batchData && batchData.length > 0 ? (
+                          batchData.map((row, index) => (
+                            <tr key={index} className="hover:bg-slate-900/40 transition-colors">
+                              <td className="px-6 py-3.5 border-r border-slate-900/40 font-mono text-cyan-400">{row.material_code || '-'}</td>
+                              <td className="px-6 py-3.5 border-r border-slate-900/40 text-slate-200">{row.material_description || '-'}</td>
+                              <td className="px-6 py-3.5 border-r border-slate-900/40 text-slate-450">{row.batch_no || '-'}</td>
+                              <td className="px-6 py-3.5 text-right font-mono text-emerald-400 font-bold">{row.t_qty || '-'} {row.unit || ''}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr><td colSpan="4" className="px-6 py-8 text-center text-slate-600 font-medium">No batch data found in this document.</td></tr>
+                        );
+                      })()}
                     </tbody>
                   </table>
                 </div>
               </div>
+
+              {/* Dynamic sleeves and consumables grid */}
+              {result.tables && (result.tables.sleeves?.length > 0 || result.tables.consumables?.length > 0) && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
+                  {/* Sleeves Table */}
+                  {result.tables.sleeves?.length > 0 && (
+                    <div className="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800 shadow-xl overflow-hidden animate-fade-in">
+                      <div className="p-6 border-b border-slate-800">
+                        <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
+                          <Layers3 size={20} className="text-indigo-400" />
+                          <span>Sleeves Specifications</span>
+                        </h3>
+                        <p className="text-slate-400 text-xs mt-1 font-semibold">Extracted sleeve consumption parameters.</p>
+                      </div>
+                      <div className="overflow-x-auto custom-scrollbar">
+                        <table className="min-w-full divide-y divide-slate-800 text-xs font-semibold">
+                          <thead className="bg-slate-950/60 text-slate-500 uppercase font-bold text-[9px] tracking-wider">
+                            <tr>
+                              <th className="px-6 py-4 text-left border-r border-slate-900/40">Sleeve Code</th>
+                              <th className="px-6 py-4 text-right">Quantity</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-slate-950/10 divide-y divide-slate-800/40 text-slate-300">
+                            {result.tables.sleeves.map((row, index) => (
+                              <tr key={index} className="hover:bg-slate-900/40 transition-colors">
+                                <td className="px-6 py-3.5 border-r border-slate-900/40 font-mono text-cyan-400">{row.code || '-'}</td>
+                                <td className="px-6 py-3.5 text-right font-mono text-emerald-400 font-bold">{row.qty || '-'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Consumables Table */}
+                  {result.tables.consumables?.length > 0 && (
+                    <div className="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800 shadow-xl overflow-hidden animate-fade-in">
+                      <div className="p-6 border-b border-slate-800">
+                        <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
+                          <Activity size={20} className="text-amber-400" />
+                          <span>Handwritten Consumables</span>
+                        </h3>
+                        <p className="text-slate-400 text-xs mt-1 font-semibold">Extracted handwritten sand, oil, and gas additions.</p>
+                      </div>
+                      <div className="overflow-x-auto custom-scrollbar">
+                        <table className="min-w-full divide-y divide-slate-800 text-xs font-semibold">
+                          <thead className="bg-slate-950/60 text-slate-500 uppercase font-bold text-[9px] tracking-wider">
+                            <tr>
+                              <th className="px-6 py-4 text-left border-r border-slate-900/40">Consumable Item</th>
+                              <th className="px-6 py-4 text-right">Quantity</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-slate-950/10 divide-y divide-slate-800/40 text-slate-300">
+                            {result.tables.consumables.map((row, index) => (
+                              <tr key={index} className="hover:bg-slate-900/40 transition-colors">
+                                <td className="px-6 py-3.5 border-r border-slate-900/40 text-slate-200">{row.item || '-'}</td>
+                                <td className="px-6 py-3.5 text-right font-mono text-emerald-400 font-bold">{row.qty || '-'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Graphical Recharts Dashboards */}
               <div className="space-y-8 pt-4">

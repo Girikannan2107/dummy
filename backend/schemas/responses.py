@@ -1,6 +1,5 @@
 from pydantic import BaseModel
 from typing import Optional, Any
-from .document import StructuredDocument
 
 class TaskResponse(BaseModel):
     message: str
@@ -10,5 +9,5 @@ class TaskResponse(BaseModel):
 class StatusResponse(BaseModel):
     task_id: str
     status: str
-    result: Optional[StructuredDocument] = None
+    result: Optional[Any] = None
     error: Optional[str] = None
