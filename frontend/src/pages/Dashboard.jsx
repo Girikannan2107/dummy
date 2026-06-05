@@ -986,7 +986,7 @@ export default function Dashboard() {
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-slate-800 pb-5">
         <div>
           <h1 className="text-3xl font-extrabold bg-gradient-to-r from-cyan-400 via-indigo-400 to-purple-400 bg-clip-text text-transparent">
-            Ladle Pouring Intelligence Center
+            Ladle Closing Intelligence Center
           </h1>
           <p className="text-slate-400 text-sm mt-1">
             Real-time digital record scanning, secure cloud data storage, and process quality analytics.
@@ -1029,7 +1029,7 @@ export default function Dashboard() {
                   <h2 className="text-lg font-bold text-slate-100">Intelligent Industrial Ingestor</h2>
                 </div>
                 <p className="text-slate-400 text-xs mb-6 leading-relaxed">
-                  Upload a handwritten or printed <strong>Ladle Pouring Record (PDF/JPG/PNG)</strong>. The system will read, align, and extract the data automatically.
+                  Upload a handwritten or printed <strong>Ladle Closing Record (PDF/JPG/PNG)</strong>. The system will read, align, and extract the data automatically.
                 </p>
                 <div
                   onDragEnter={handleDrag} onDragOver={handleDrag} onDragLeave={handleDrag} onDrop={handleDrop}
@@ -1121,14 +1121,8 @@ export default function Dashboard() {
           {/* Extracted Data Blocks */}
           {result && (
             <>
-              <div className="grid grid-cols-1 xl:grid-cols-5 gap-8 items-start animate-fade-in">
-              {/* Left Column: Interactive Document Preview */}
-              <div className="xl:col-span-2">
-                <DocumentPreview file={file} filename={uploadedFilename} />
-              </div>
-
-              {/* Right Column: Dynamic Section Tables */}
-              <div className="xl:col-span-3 space-y-6">
+              {/* Dynamic Section Tables */}
+              <div className="space-y-6 animate-fade-in">
                 {Object.entries(result).map(([sectionKey, sectionData]) => {
                   // Skip system headers and flat values
                   if (sectionKey === "error" || sectionKey === "message" || sectionKey === "filename" || sectionKey === "task_id") return null;
@@ -1176,7 +1170,6 @@ export default function Dashboard() {
                   );
                 })}
               </div>
-            </div>
 
               {/* Graphical Recharts Dashboards */}
               <div className="space-y-8 pt-4">

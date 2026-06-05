@@ -27,7 +27,7 @@ export default function App() {
                                     v2.1
                                 </span>
                             </div>
-                            <p className="text-[10px] text-slate-400 font-medium tracking-wide">LADLE POURING & IDP VALIDATION SYSTEMS</p>
+                            <p className="text-[10px] text-slate-400 font-medium tracking-wide">LADLE CLOSING & IDP VALIDATION SYSTEMS</p>
                         </div>
                     </div>
 
