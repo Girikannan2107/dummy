@@ -1,19 +1,13 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
+from fastapi.staticfiles import StaticFiles
+
 from core.config import settings
 from database.connection import db_client
-from api.v1 import documents
-from fastapi.middleware.cors import CORSMiddleware
+from api.v1 import documents, webhooks
 
-app.add_middleware(
-    CORSMiddleware,
-    # Replace the Vercel URL with your actual deployed frontend URL later
-    allow_origins=["http://localhost:5173", "https://closing.vercel.app"], 
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# 1. DEFINE DATABASE STARTUP/SHUTDOWN
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Connect to MongoDB at startup
@@ -22,33 +16,44 @@ async def lifespan(app: FastAPI):
     # Disconnect from MongoDB at shutdown
     db_client.disconnect()
 
+# 2. CREATE THE APP ONCE
 app = FastAPI(
-    title=settings.PROJECT_NAME,
+    title=settings.PROJECT_NAME or "Intelligent Document Processing API",
+    version="2.1",
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     lifespan=lifespan
 )
 
-# Allow React frontend to communicate with this API
+# 3. ADD CORS MIDDLEWARE
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In production, restrict this to your frontend domain
+    # Restrict this to your actual Vercel/Frontend domains in production
+    allow_origins=["http://localhost:5173", "https://your-app-name.vercel.app"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-from fastapi.staticfiles import StaticFiles
+# 4. MOUNT STATIC FILES FOR UPLOADS PREVIEW
+app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
-# Include Routers
+# 5. INCLUDE ROUTERS
 app.include_router(
     documents.router, 
-    prefix=settings.API_V1_STR, 
+    prefix=f"{settings.API_V1_STR}", 
     tags=["Documents"]
 )
+app.include_router(
+    webhooks.router, 
+    prefix=f"{settings.API_V1_STR}", 
+    tags=["Webhooks"]
+)
 
-# Serve uploaded documents for preview
-app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
+# 6. ROOT AND HEALTH ENDPOINTS
+@app.get("/")
+async def root():
+    return {"message": "IDP Engine is running"}
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "service": settings.PROJECT_NAME}
+    return {"status": "healthy", "service": settings.PROJECT_NAME or "IDP Engine"}

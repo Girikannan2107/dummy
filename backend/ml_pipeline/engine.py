@@ -1,6 +1,7 @@
 import fitz  # PyMuPDF
 import base64
 import json
+import time
 import os
 import mimetypes
 import requests
@@ -102,14 +103,33 @@ Return strictly valid JSON matching this exact skeleton structure. Let the AI dy
                 }
             }
             
-            response = requests.post(url, headers=headers, json=payload)
-            if response.status_code != 200:
-                print("Status:", response.status_code)
-                print("Response:", response.text)
-                return {
-                    "error": response.text,
-                    "total_pages": total_pages
-                }            
+            # ==========================================
+            # --- NEW AUTO-RETRY LOGIC ADDED HERE ---
+            # ==========================================
+            max_retries = 3
+            for attempt in range(max_retries):
+                response = requests.post(url, headers=headers, json=payload)
+                
+                # If Google is busy (503), wait 5 seconds and try again
+                if response.status_code == 503:
+                    print(f"⚠️ Google servers busy (503). Retrying in 5 seconds... (Attempt {attempt + 1} of {max_retries})")
+                    time.sleep(5)
+                    # If this was our last attempt, return the error
+                    if attempt == max_retries - 1:
+                        return {"error": response.text, "total_pages": total_pages}
+                    continue # Skip the rest of the loop and try again
+                
+                # If it's a different error (like 400 or 429), break and return it
+                if response.status_code != 200:
+                    print("Status:", response.status_code)
+                    print("Response:", response.text)
+                    return {"error": response.text, "total_pages": total_pages}
+                
+                # If we get here, the status is 200 OK! Break out of the retry loop.
+                break 
+            # ==========================================
+
+            # Parse successful response
             result = response.json()
             ai_text_response = result['candidates'][0]['content']['parts'][0]['text'].strip()
             

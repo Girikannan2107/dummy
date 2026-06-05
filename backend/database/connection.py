@@ -8,7 +8,7 @@ class DatabaseClient:
         try:
             # We configure a short connection timeout so that it fails fast and transparently
             # falls back to the file system if MongoDB is not available on localhost.
-            self.client = AsyncIOMotorClient(settings.MONGO_URI, serverSelectionTimeoutMS=2000)
+            self.client = AsyncIOMotorClient(settings.MONGO_URI, serverSelectionTimeoutMS=2000, tlsAllowInvalidCertificates=True)
             print("MongoDB client initialized successfully.")
         except Exception as e:
             print(f"MongoDB initialization error: {e}")

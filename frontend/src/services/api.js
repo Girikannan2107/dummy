@@ -16,7 +16,7 @@ export const documentApi = {
         formData.append('file', file);
         
         try {
-            const response = await apiClient.post('/documents/process', formData, {
+            const response = await apiClient.post('/process', formData, {
                 headers: {
                     'Content-Type': 'multipart/form-data',
                 },
@@ -30,12 +30,12 @@ export const documentApi = {
     
     // Download the separated Excel sheets
     downloadExcel: async () => {
-        window.open(`${API_BASE_URL}/documents/export`, '_blank');
+        window.open(`${API_BASE_URL}/export`, '_blank');
     },
 
     getAllDocuments: async () => {
         try {
-            const response = await apiClient.get('/documents');
+            const response = await apiClient.get('/');
             return response.data;
         } catch (error) {
             console.error("Failed to fetch documents:", error);
@@ -45,7 +45,7 @@ export const documentApi = {
 
     exportDocuments: async () => {
         try {
-            const response = await apiClient.get('/documents/export', {
+            const response = await apiClient.get('/export', {
                 responseType: 'blob'
             });
             return response.data;

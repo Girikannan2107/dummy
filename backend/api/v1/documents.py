@@ -41,7 +41,7 @@ def merge_page_data(existing_data: dict, new_page_data: dict) -> dict:
             merged[key] = val
     return merged
 
-@router.post("/documents/process")
+@router.post("/process")
 async def upload_and_process_document(
     file: UploadFile = File(None),
     filename: str = None,
@@ -86,9 +86,13 @@ async def upload_and_process_document(
         print(f"DEBUG - Extracted page results payload: {result_payload}")
         
         if isinstance(result_payload, dict) and "error" in result_payload:
+            # Dynamically set to 503 if Google is busy, else 500
+            error_msg = result_payload['error']
+            status = 503 if "503" in error_msg or "UNAVAILABLE" in error_msg else 500
+            
             raise HTTPException(
-                status_code=422, 
-                detail=f"AI Extraction Pipeline Error: {result_payload['error']}"
+                status_code=status, 
+                detail=f"AI Extraction Pipeline Error: {error_msg}"
             )
             
         extracted_data = result_payload["extracted_data"]
@@ -123,7 +127,7 @@ async def upload_and_process_document(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Processing failed inside route: {str(e)}")
 
-@router.get("/documents")
+@router.get("/")
 async def get_all_processed_documents(db = Depends(get_db)):
     """
     Retrieves all processed document records from the database.
@@ -135,7 +139,7 @@ async def get_all_processed_documents(db = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve records: {str(e)}")
 
-@router.get("/documents/export")
+@router.get("/export")
 async def export_all_data_to_excel(db = Depends(get_db)):
     """
     Aggregates all processed document records and converts them to a multi-sheet Excel file.
@@ -265,6 +269,6 @@ async def export_all_data_to_excel(db = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to export data: {str(e)}")
 
-@router.get("/documents/status/{task_id}")
+@router.get("/status/{task_id}")
 async def get_processing_status(task_id: str):
     return {"task_id": task_id, "status": "SYNC_MODE_ACTIVE", "message": "Redis is disabled. Check the main /process route for output."}

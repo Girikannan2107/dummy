@@ -948,7 +948,7 @@ export default function Dashboard() {
     formData.append('file', file);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/documents/process?page=0`, {
+      const response = await fetch(`${API_BASE_URL}/process?page=0`, {
         method: 'POST',
         body: formData,
       });
@@ -975,7 +975,7 @@ export default function Dashboard() {
     
     try {
       const nextPage = currentPage + 1;
-      const response = await fetch(`${API_BASE_URL}/documents/process?page=${nextPage}&filename=${uploadedFilename}&task_id=${taskId}`, {
+      const response = await fetch(`${API_BASE_URL}/process?page=${nextPage}&filename=${uploadedFilename}&task_id=${taskId}`, {
         method: 'POST'
       });
       if (!response.ok) throw new Error(`Server responded with status: ${response.status}`);
