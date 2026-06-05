@@ -146,15 +146,9 @@ async def export_all_data_to_excel(db = Depends(get_db)):
     Sheet 1: Queue Data (Pages 1-5)
     Sheet 2: Batch Summary (Page 6)
     """
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database connection is not initialized.")
-        
     try:
-        collection = db["processed_documents"]
-        
-        # Fetch all documents that have extracted data
-        cursor = collection.find({"extracted_data": {"$exists": True}})
-        documents = await cursor.to_list(length=10000)
+        repo = DocumentRepository(db)
+        documents = await repo.get_all_documents()
 
         queue_rows = []
         batch_rows = []

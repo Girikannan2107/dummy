@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     # Database Settings
     MONGO_URI: str = Field(default="mongodb://localhost:27017", validation_alias="MONGODB_URI")
     MONGO_DB_NAME: str = "industrial_ocr"
+    STATELESS_MODE: bool = False
 
     @property
     def DB_NAME(self) -> str:

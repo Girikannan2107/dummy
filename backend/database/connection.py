@@ -5,6 +5,11 @@ class DatabaseClient:
     client: AsyncIOMotorClient = None
 
     def connect(self):
+        if getattr(settings, "STATELESS_MODE", False) or not settings.MONGO_URI or settings.MONGO_URI.lower() in ("none", "null", ""):
+            print("[STATELESS MODE ACTIVE] Bypassing MongoDB client initialization.")
+            self.client = None
+            return
+
         try:
             # We configure a short connection timeout so that it fails fast and transparently
             # falls back to the file system if MongoDB is not available on localhost.
