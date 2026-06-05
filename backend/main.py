@@ -4,7 +4,16 @@ from contextlib import asynccontextmanager
 from core.config import settings
 from database.connection import db_client
 from api.v1 import documents
+from fastapi.middleware.cors import CORSMiddleware
 
+app.add_middleware(
+    CORSMiddleware,
+    # Replace the Vercel URL with your actual deployed frontend URL later
+    allow_origins=["http://localhost:5173", "https://closing.vercel.app"], 
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Connect to MongoDB at startup

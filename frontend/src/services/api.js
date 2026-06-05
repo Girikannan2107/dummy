@@ -6,6 +6,9 @@ const apiClient = axios.create({
     timeout: 60000, // Important: 60 seconds (Wait for Gemini 6-page vision processing)
 });
 
+// Vite uses import.meta.env instead of process.env
+export const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
+
 export const documentApi = {
     // Post the document directly and wait for the final JSON
     processDocument: async (file) => {
